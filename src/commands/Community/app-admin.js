@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, PermissionFlagsBits, PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ComponentType, LabelBuilder, RoleSelectMenuBuilder } from 'discord.js';
+import { SlashCommandBuilder, PermissionFlagsBits, PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ComponentType, LabelBuilder, RoleSelectMenuBuilder, MessageFlags } from 'discord.js';
 import { createEmbed, successEmbed } from '../../utils/embeds.js';
 import { getColor, getApplicationStatusColor } from '../../config/bot.js';
 import { logger } from '../../utils/logger.js';
@@ -363,6 +363,19 @@ async function handleReview(interaction) {
             const reason = reasonSubmit.fields.getTextInputValue('review_reason').trim() || "No reason provided.";
             const action = isApprove ? 'approve' : 'deny';
             const status = isApprove ? 'approved' : 'denied';
+            if (isApprove) {
+                const { assertOnboardingRoleAllowed } = await import('../../services/onboardingService.js');
+                try {
+                    await assertOnboardingRoleAllowed(reasonSubmit.client, interaction.guild.id, application.roleId);
+                } catch (error) {
+                    logger.warn('Application approval blocked by onboarding role restrictions:', error);
+                    await reasonSubmit.reply({
+                        content: 'This role is reserved for onboarding. Use the private onboarding review queue instead.',
+                        flags: MessageFlags.Ephemeral,
+                    });
+                    return;
+                }
+            }
 
             const updatedApplication = await ApplicationService.reviewApplication(
                 reasonSubmit.client,
@@ -580,4 +593,3 @@ async function handleList(interaction) {
         flags: ["Ephemeral"],
     });
 }
-

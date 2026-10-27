@@ -73,6 +73,8 @@ export default {
             }
 
             if (item.type === "role" && itemId === "premium_role") {
+                const { assertOnboardingRoleAllowed } = await import('../../services/onboardingService.js');
+                await assertOnboardingRoleAllowed(client, guildId, PREMIUM_ROLE_ID);
                 if (!PREMIUM_ROLE_ID) {
                     throw createError(
                         "Premium role not configured",

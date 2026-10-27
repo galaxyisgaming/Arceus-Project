@@ -72,8 +72,11 @@ class DatabaseWrapper {
         return this.db.set(key, value, ttl);
     }
 
-    async get(key, defaultValue = null) {
-        return this.db.get(key, defaultValue);
+    async get(key, defaultValue = null, options = {}) {
+        if (options.strict && !this.isAvailable()) {
+            throw new Error('Persistent database unavailable. Please try again later.');
+        }
+        return this.db.get(key, defaultValue, options);
     }
 
     async delete(key) {

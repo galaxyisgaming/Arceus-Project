@@ -5,6 +5,7 @@ import { handleInteractionError, createError, ErrorTypes } from '../../utils/err
 import { getColor } from '../../config/bot.js';
 import { logEvent, EVENT_TYPES } from '../../services/loggingService.js';
 import { getReactionRoleMessage } from '../../services/reactionRoleService.js';
+import { assertOnboardingMemberApproved, assertOnboardingRoleAllowed } from '../../services/onboardingService.js';
 
 export async function handleReactionRolesSelectMenu(interaction, client) {
     try {
@@ -35,7 +36,15 @@ export async function handleReactionRolesSelectMenu(interaction, client) {
             });
         }
 
+        if (reactionRoleData.mode === 'reactions') {
+            await interaction.editReply({
+                content: 'This panel now uses emoji reactions. React beneath the panel to add a role, or remove your reaction to remove it.',
+            });
+            return;
+        }
+
         const member = interaction.member;
+        await assertOnboardingMemberApproved(client, member);
         const selectedRoleIds = interaction.values;
 
         const me = interaction.guild.members.me ?? await interaction.guild.members.fetchMe().catch(() => null);
@@ -69,6 +78,7 @@ export async function handleReactionRolesSelectMenu(interaction, client) {
         const skippedRoles = [];
 
         for (const roleId of selectedRoleIds) {
+            await assertOnboardingRoleAllowed(client, interaction.guildId, roleId);
             if (!availableRoleIds.includes(roleId)) {
                 logger.warn(`Role ${roleId} not in available roles for message ${interaction.message.id}`);
                 continue;
@@ -117,6 +127,7 @@ export async function handleReactionRolesSelectMenu(interaction, client) {
         }
 
         for (const roleId of availableRoleIds) {
+            await assertOnboardingRoleAllowed(client, interaction.guildId, roleId);
             if (selectedRoleIds.includes(roleId)) continue;
 
             const role = interaction.guild.roles.cache.get(roleId);

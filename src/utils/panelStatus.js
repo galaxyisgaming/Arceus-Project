@@ -36,7 +36,8 @@ export function messageHasSelectMenuCustomId(message, selectCustomId) {
     return walk(rows);
 }
 
-export function messageHasPanelMarker(message, { buttonCustomId, selectCustomId } = {}) {
+export function messageHasPanelMarker(message, { buttonCustomId, selectCustomId, reactionMessageId } = {}) {
+    if (reactionMessageId && message.id === reactionMessageId) return true;
     if (buttonCustomId && messageHasButtonCustomId(message, buttonCustomId)) return true;
     if (selectCustomId && messageHasSelectMenuCustomId(message, selectCustomId)) return true;
     return false;
@@ -72,30 +73,40 @@ export async function getBotPanelStatus(client, guild, {
     buttonCustomId = null,
     selectCustomId = null,
     scanLimit = 50,
+    reactionMessageId = null,
 } = {}) {
     if (!channelId) {
         return { exists: false, reason: 'no_channel' };
     }
 
-    if (!buttonCustomId && !selectCustomId) {
+    if (!buttonCustomId && !selectCustomId && !reactionMessageId) {
         return { exists: false, reason: 'no_channel' };
     }
 
-    const channel = await guild.channels.fetch(channelId).catch(() => null);
+    const channel = await guild.channels.fetch(channelId).catch(error => {
+        if (reactionMessageId && error.code !== 10003) throw error;
+        return null;
+    });
     if (!channel) {
         return { exists: false, reason: 'channel_missing' };
     }
 
-    const marker = { buttonCustomId, selectCustomId };
+    const marker = { buttonCustomId, selectCustomId, reactionMessageId };
 
     if (messageId) {
-        const message = await channel.messages.fetch(messageId).catch(() => null);
-        if (message && messageHasPanelMarker(message, marker)) {
+        const message = await channel.messages.fetch(messageId).catch(error => {
+            if (reactionMessageId && error.code !== 10008) throw error;
+            return null;
+        });
+        if (message && message.author.id === client.user.id && messageHasPanelMarker(message, marker)) {
             return { exists: true, message, channel };
         }
     }
 
-    const messages = await channel.messages.fetch({ limit: scanLimit }).catch(() => null);
+    const messages = await channel.messages.fetch({ limit: scanLimit }).catch(error => {
+        if (reactionMessageId) throw error;
+        return null;
+    });
     const messageList = messages
         ? [...(typeof messages.values === 'function' ? messages.values() : messages)]
         : [];
@@ -130,7 +141,7 @@ export async function getReactionRolePanelStatus(client, guild, panelData) {
     return getBotPanelStatus(client, guild, {
         channelId: panelData?.channelId,
         messageId: panelData?.messageId,
-        selectCustomId: 'reaction_roles',
+        selectCustomId: panelData?.mode === 'reactions' ? null : 'reaction_roles',
+        reactionMessageId: panelData?.messageId,
     });
 }
-

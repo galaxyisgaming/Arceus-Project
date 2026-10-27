@@ -305,6 +305,8 @@ export async function checkBirthdays(client) {
           if (birthdayRoleId) {
             const member = await guild.members.fetch(userId).catch(() => null);
             if (member && member.roles.cache.has(birthdayRoleId)) {
+              const { assertOnboardingRoleAllowed } = await import('./onboardingService.js');
+              await assertOnboardingRoleAllowed(client, guildId, birthdayRoleId);
               await member.roles.remove(birthdayRoleId, "Birthday role expired");
             }
           }
@@ -328,6 +330,8 @@ export async function checkBirthdays(client) {
             birthdayMembers.push(member);
             if (birthdayRoleId) {
               try {
+                const { assertOnboardingRoleAllowed } = await import('./onboardingService.js');
+                await assertOnboardingRoleAllowed(client, guild.id, birthdayRoleId);
                 await member.roles.add(birthdayRoleId, "Happy Birthday! 🎉");
                 updatedTrackingData[userId] = true;
               } catch (error) {

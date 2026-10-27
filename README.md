@@ -54,6 +54,118 @@ TitanBot offers a complete suite of tools for Discord server management and comm
 - **Emoji Selection** - Reaction-based system
 - **Multi-role Support** - Multiple role options
 
+Administrators create panels with `/reactroles setup` and manage them with
+`/reactroles dashboard`. Members click the numbered/letter emoji reaction beside
+a role to receive it, and remove their own reaction to remove that role. The
+dashboard itself remains slash-command based.
+
+Existing dropdown panels convert automatically on startup without removing any
+member's existing roles. Emoji mappings persist across restarts and dashboard
+edits. Opening the dashboard retries panel synchronization after a permission
+issue. Old dropdown interactions on converted panels direct members to reactions.
+
+The bot needs **Manage Roles**, **View Channel**, **Read Message History** and
+**Add Reactions**, and its highest role must be above the roles being assigned.
+**Manage Messages** is also needed when removing an option that members have
+already reacted to; those reactions are cleared without removing their roles.
+Managed, everyone and high-privilege roles cannot be self-assigned.
+
+Discord permits **20 distinct reactions per message**. Create additional panels
+for more roles. Older panels with more than 20 roles are left unconverted with an
+explicit startup error; split their roles into smaller panels before restarting.
+Role changes while the bot is offline are not replayed.
+
+Run the focused checks with `node --test scripts/reaction-roles.test.js`.
+
+### PokeGalaxy onboarding
+
+Onboarding is **disabled by default**. It does not create/change Discord channels,
+permissions, roles, webhooks or AutoMod rules, and does not remove existing members'
+roles. Configure permissions deliberately before enabling it.
+
+The flow is rules agreement -> private five-field screening form -> automatic
+approval or private staff review -> optional roles -> a link to the **existing**
+PokeGalaxy welcome summary. The form asks invitation yes/no, optional inviter,
+18+/under-18 category, interest and conduct agreement. Discord account age is read
+automatically. No exact age or birthday is requested.
+
+Accounts at least seven days old with recognized answers and accepted agreements
+are automatically approved. Newer accounts and unclear answers require staff
+review. Invitation status and adult/minor category alone do not reject anyone.
+Conduct disagreement leaves access restricted. Staff can approve, decline, or
+request corrected answers, with a required decision reason. Declining never kicks
+or bans the member. Age category is self-reported, **not identity/age verification**.
+All shared public channels must remain appropriate for minors; content filtering
+and Discord age-restricted channels must be configured separately.
+
+For the PokeGalaxy server, the supplied channel/verified-role/reviewer-role IDs
+are built into disabled defaults. The missing settings are a shared restricted
+gameplay **text channel** inside category `1564732192129679480` and a neutral
+gameplay-access **role**. Use a neutral name rather than a public age label; Discord
+roles are not confidential. The dedicated role is granted before the verified
+role when an approved applicant reports under 18.
+
+Administrator commands:
+
+- `/onboarding dashboard`: inspect settings.
+- `/onboarding configure`: save channel, access-role, game-bot, reviewer-role,
+  welcome-message or rules-version settings while disabled.
+- `/onboarding check`: validate setup without enabling it.
+- `/onboarding panel`: post/update the member-facing screening panel.
+- `/onboarding enable`: validate setup and the panel, then enable.
+- `/onboarding disable`: stop onboarding without removing any member's roles.
+  Legacy verification becomes available again if it is separately enabled.
+
+Before enabling:
+
+1. Let newcomers (`@everyone`) view rules and onboarding. Hide normal member areas
+   until approval. Do not assign access-granting roles automatically on arrival.
+2. Hide review, optional roles, welcome and restricted gameplay from `@everyone`.
+   Only reviewer roles, administrators and Arceus should see the staff queue;
+   member access roles must not expose it.
+3. Give the verified role access to optional roles and welcome, but not restricted
+   gameplay. Give the gameplay-access role View Channel, Send Messages and Read
+   Message History in restricted gameplay. Give the three reviewer roles access.
+4. Give Arceus Manage Roles, place its role above both access roles, and allow it
+   to view/read all six configured channels and send/embed in onboarding/review.
+5. Give PokeGalaxy View Channel, Send Messages, Read Message History, Embed Links
+   and Attach Files in restricted gameplay. The main bot is the default;
+   `game-bot` can select another PokeGalaxy test bot.
+6. Confirm the saved welcome message contains the intended summary embed. No
+   webhook credentials are needed and the message is not reposted per applicant.
+7. Audit **other** server roles/overwrites too: the checks validate the configured
+   access paths, not every possible combined role a member might receive.
+
+When enabled, join welcome/auto-role/auto-verification is replaced for human new
+members. Legacy verify buttons and `/verify` direct them to screening. Access and
+reviewer roles are reserved against grants through reaction panels, the legacy
+application flow, shop, birthdays and leveling. Optional self-role assignment
+requires approval. These checks do not override deliberate Discord staff actions.
+
+Progress and decisions use persistent PostgreSQL storage, versioned rules
+agreement, join-specific sessions, retryable role grants and serialized decisions
+within one bot process. Run **one active Arceus replica**; multiple concurrent
+instances require distributed coordination before use. Database degradation/read
+errors block approval rather than using temporary memory. Pending/unfinished
+records expire after 30 days and reviewed records after 14 days; granted roles
+remain. Discord staff-review messages are separate and must be retained/deleted
+according to the server's staff policy.
+
+Review cards are restored after restart, and member status is available through
+the onboarding panel even when DMs are closed. Native Discord membership screening
+must also be completed. Role selection is optional: the welcome button does not
+require choosing any notification role. No PokeGalaxy economy/game data is edited.
+
+Run local policy, UI, failure-path and regression checks:
+
+```sh
+node --test scripts/onboarding.test.js scripts/reaction-roles.test.js
+```
+
+These are mocked Discord/database integration tests, not a live-server acceptance
+test. Before rollout, use a test member to exercise both approval routes, optional
+roles, the welcome link and an actual PokeGalaxy command in restricted gameplay.
+
 </td>
 <td width="50%" valign="top">
 

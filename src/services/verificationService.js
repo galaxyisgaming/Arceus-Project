@@ -7,6 +7,7 @@ import { getGuildConfig, setGuildConfig } from './config/guildConfig.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
 import { insertVerificationAudit } from '../utils/database.js';
 import { ensureTypedServiceError } from '../utils/serviceErrorBoundary.js';
+import { getOnboardingConfig } from './onboardingService.js';
 
 const verificationCooldowns = new Map();
 const attemptTracker = new Map();
@@ -32,6 +33,11 @@ export async function verifyUser(client, guildId, userId, options = {}) {
     const { source = 'manual', moderatorId = null } = options;
     
     try {
+        const onboarding = await getOnboardingConfig(client, guildId);
+        if (onboarding.enabled) {
+            throw createError('Onboarding replaces legacy verification', ErrorTypes.VALIDATION,
+                `Complete screening in <#${onboarding.applicationChannelId}>. Staff must use the onboarding review queue.`);
+        }
         
         const guild = client.guilds.cache.get(guildId);
         if (!guild) {
@@ -176,6 +182,8 @@ function pruneVerificationTrackers(now = Date.now()) {
 
 export async function autoVerifyOnJoin(client, guild, member, verificationConfig) {
     try {
+        const onboarding = await getOnboardingConfig(client, guild.id);
+        if (onboarding.enabled) return { autoVerified: false, reason: 'onboarding_required' };
         
         if (!verificationConfig.autoVerify?.enabled) {
             return {

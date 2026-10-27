@@ -4,6 +4,9 @@
  */
 
 export const getGuildConfigKey = (guildId) => `guild:${guildId}:config`;
+export const getOnboardingConfigKey = (guildId) => `guild:${guildId}:onboarding:config`;
+export const getOnboardingMemberKey = (guildId, userId) => `guild:${guildId}:onboarding:members:${userId}`;
+export const getOnboardingMembersPrefix = (guildId) => `guild:${guildId}:onboarding:members:`;
 export const getGuildBirthdaysKey = (guildId) => `guild:${guildId}:birthdays`;
 export const getBirthdayLeftBackupKey = (guildId) => `guild:${guildId}:birthdays:left`;
 export const getBirthdayTrackingKey = (guildId) => `guild:${guildId}:birthdays:tracking`;

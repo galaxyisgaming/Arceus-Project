@@ -369,9 +369,10 @@ class PostgreSQLDatabase {
         return defaultValue;
     }
 
-    async get(key, defaultValue = null) {
+    async get(key, defaultValue = null, options = {}) {
         try {
             if (!this.isAvailable()) {
+                if (options.strict) throw new Error('Persistent database unavailable.');
                 logger.warn('PostgreSQL not available, returning default value');
                 return defaultValue;
             }
@@ -406,6 +407,7 @@ class PostgreSQLDatabase {
             return structuredValue;
         } catch (error) {
             logger.error(`Error getting value for key ${key}:`, error);
+            if (options.strict) throw error;
             return defaultValue;
         }
     }

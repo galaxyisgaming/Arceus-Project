@@ -7,6 +7,7 @@ import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
+import { getOnboardingConfig, beginOnboarding } from '../services/onboardingService.js';
 
 export default {
   name: Events.GuildMemberAdd,
@@ -17,12 +18,15 @@ export default {
         const { guild, user } = member;
         
         const config = await getGuildConfig(member.client, guild.id);
+        const onboarding = await getOnboardingConfig(member.client, guild.id);
+        const onboardingRequired = onboarding.enabled && !user.bot;
+        if (onboardingRequired) await beginOnboarding(member.client, member, true);
         
         const welcomeConfig = await getWelcomeConfig(member.client, guild.id);
         
         const welcomeChannelId = welcomeConfig?.channelId;
 
-        if (welcomeConfig?.enabled && welcomeChannelId) {
+        if (!onboardingRequired && welcomeConfig?.enabled && welcomeChannelId) {
             const channel = guild.channels.cache.get(welcomeChannelId);
             const me = guild.members.me;
             const permissions = channel?.isTextBased?.() && me ? channel.permissionsFor(me) : null;
@@ -78,7 +82,7 @@ export default {
             }
         }
         
-        if (welcomeConfig?.roleIds && welcomeConfig.roleIds.length > 0) {
+        if (!onboardingRequired && welcomeConfig?.roleIds && welcomeConfig.roleIds.length > 0) {
             const delay = welcomeConfig.autoRoleDelay || 0;
             const singleRoleId = welcomeConfig.roleIds[0];
             
@@ -100,7 +104,7 @@ export default {
             }
         }
         
-        if (config?.verification?.enabled || config?.verification?.autoVerify?.enabled) {
+        if (!onboardingRequired && (config?.verification?.enabled || config?.verification?.autoVerify?.enabled)) {
             await handleVerification(member, guild, config.verification, member.client);
         }
 
@@ -191,6 +195,8 @@ async function handleVerification(member, guild, verificationConfig, client) {
 
 async function assignRoleSafely(member, role) {
     try {
+        const { assertOnboardingRoleAllowed } = await import('../services/onboardingService.js');
+        await assertOnboardingRoleAllowed(member.client, member.guild.id, role.id);
         await member.roles.add(role);
     } catch (error) {
         logger.warn(`Failed to assign role ${role.id} to member ${member.id}:`, error);

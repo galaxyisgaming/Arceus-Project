@@ -29,6 +29,8 @@ async function tryAwardRole(member, roleId, level) {
     const role = member.guild.roles.cache.get(roleId) || (await member.guild.roles.fetch(roleId).catch(() => null));
     if (!role || member.roles.cache.has(roleId)) return false;
 
+    const { assertOnboardingRoleAllowed } = await import('../onboardingService.js');
+    await assertOnboardingRoleAllowed(member.client, member.guild.id, roleId);
     await member.roles.add(role, `Level ${level} reward (startup sync)`);
     return true;
 }

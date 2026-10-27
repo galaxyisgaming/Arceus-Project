@@ -13,7 +13,8 @@ const DANGEROUS_PERMISSIONS = [
     'ManageChannels',
     'ManageWebhooks',
     'BanMembers',
-    'KickMembers'
+    'KickMembers',
+    'MentionEveryone'
 ];
 
 function validateGuildId(guildId) {
@@ -349,7 +350,11 @@ export async function getAllReactionRoleMessages(client, guildId) {
                     }
                     
                     if (actualData && actualData.messageId && actualData.channelId) {
-                        messages.push(actualData);
+                        messages.push(Array.isArray(actualData.roles) ? actualData : {
+                            ...actualData,
+                            roles: Object.values(actualData.roles || {}),
+                            emojiRoles: actualData.emojiRoles || actualData.roles || {},
+                        });
                     } else if (actualData) {
                         logger.warn(`Skipping malformed reaction role data for guild ${guildId}:`, actualData);
                     }
@@ -460,7 +465,7 @@ export async function reconcileReactionRoleMessages(client, guildId = null) {
 
                 try {
                     const channel = guild.channels.cache.get(reactionRoleMessage.channelId)
-                        || await guild.channels.fetch(reactionRoleMessage.channelId).catch(() => null);
+                        || await guild.channels.fetch(reactionRoleMessage.channelId);
 
                     if (!channel || !channel.isTextBased?.()) {
                         await client.db.delete(getReactionRoleKey(targetGuildId, reactionRoleMessage.messageId));
@@ -468,12 +473,17 @@ export async function reconcileReactionRoleMessages(client, guildId = null) {
                         continue;
                     }
 
-                    const message = await channel.messages.fetch(reactionRoleMessage.messageId).catch(() => null);
+                    const message = await channel.messages.fetch(reactionRoleMessage.messageId);
                     if (!message) {
                         await client.db.delete(getReactionRoleKey(targetGuildId, reactionRoleMessage.messageId));
                         summary.removedMessages += 1;
                     }
                 } catch (messageCheckError) {
+                    if ([10003, 10008].includes(messageCheckError.code)) {
+                        await client.db.delete(getReactionRoleKey(targetGuildId, reactionRoleMessage.messageId));
+                        summary.removedMessages += 1;
+                        continue;
+                    }
                     summary.errors += 1;
                     logger.warn(
                         `Failed to validate reaction role message ${reactionRoleMessage.messageId} during reconciliation:`,

@@ -6,6 +6,7 @@ import { logEvent, EVENT_TYPES } from '../loggingService.js';
 import { formatLogLine } from '../../utils/logging/logEmbeds.js';
 import { Mutex } from '../../utils/mutex.js';
 import { wrapServiceBoundary } from '../../utils/errorHandler.js';
+import { assertOnboardingRoleAllowed } from '../onboardingService.js';
 
 /**
  * Award XP to a member. Returns null when XP is skipped (disabled/invalid amount).
@@ -102,6 +103,7 @@ async function awardRoleReward(guild, member, roleId, level) {
       return;
     }
 
+    await assertOnboardingRoleAllowed(guild.client, guild.id, roleId);
     await member.roles.add(role, `Level ${level} reward`);
     logger.info(`✅ Awarded role ${role.name} to ${member.user.tag} for reaching level ${level}`);
   } catch (error) {
