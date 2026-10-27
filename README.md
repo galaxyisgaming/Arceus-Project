@@ -111,6 +111,9 @@ Administrator commands:
 - `/onboarding dashboard`: inspect settings.
 - `/onboarding configure`: save channel, access-role, game-bot, reviewer-role,
   welcome-message or rules-version settings while disabled.
+  If the gameplay channel is missing from Discord's picker, use
+  `gameplay-channel-id:1564736135899517099`. Arceus fetches and validates the
+  server text channel before saving; the usual permission checks still apply.
 - `/onboarding check`: validate setup without enabling it.
 - `/onboarding panel`: post/update the member-facing screening panel.
 - `/onboarding enable`: validate setup and the panel, then enable.

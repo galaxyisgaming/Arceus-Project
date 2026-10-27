@@ -25,6 +25,7 @@ export default {
                     .addChannelTypes(ChannelType.GuildText));
             }
             return sub
+                .addStringOption(option => option.setName('gameplay-channel-id').setDescription('Text channel ID when the gameplay channel picker cannot find it'))
                 .addRoleOption(option => option.setName('verified-role').setDescription('Role granted after approval'))
                 .addRoleOption(option => option.setName('gameplay-role').setDescription('Neutral access role for the restricted gameplay channel'))
                 .addUserOption(option => option.setName('game-bot').setDescription('PokeGalaxy bot that must be able to use restricted gameplay'))
@@ -53,6 +54,25 @@ export default {
                 for (const [name] of channelOptions) {
                     const channel = interaction.options.getChannel(`${name}-channel`);
                     if (channel) config[`${name}ChannelId`] = channel.id;
+                }
+                const gameplayChannelId = interaction.options.getString('gameplay-channel-id')?.trim();
+                if (gameplayChannelId) {
+                    if (!/^\d{17,20}$/.test(gameplayChannelId)) throw new Error('Enter a valid gameplay text-channel ID.');
+                    const selected = interaction.options.getChannel('gameplay-channel');
+                    if (selected && selected.id !== gameplayChannelId) {
+                        throw new Error('Choose either gameplay-channel or its matching ID, not two different channels.');
+                    }
+                    let channel;
+                    try {
+                        channel = await guild.channels.fetch(gameplayChannelId, { force: true });
+                    } catch (error) {
+                        if (![10003, 50001, 50013].includes(error.code)) throw error;
+                        throw new Error('Arceus cannot access that channel. Check the ID, server and View Channel permission.');
+                    }
+                    if (!channel || channel.type !== ChannelType.GuildText) {
+                        throw new Error('The gameplay channel ID must identify a standard text channel in this server.');
+                    }
+                    config.gameplayChannelId = channel.id;
                 }
                 for (const name of ['verified', 'gameplay']) {
                     const role = interaction.options.getRole(`${name}-role`);

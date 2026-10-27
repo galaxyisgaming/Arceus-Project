@@ -480,6 +480,48 @@ test('actual slash enable refuses incomplete setup without mutating member acces
     assert.equal(f.calls.length, 0);
 });
 
+function configureInteraction(f, id, selected = null) {
+    return interaction(f, {
+        memberPermissions: new PermissionsBitField(PermissionFlagsBits.Administrator),
+        options: {
+            getSubcommand: () => 'configure',
+            getChannel: name => name === 'gameplay-channel' ? selected : null,
+            getString: name => name === 'gameplay-channel-id' ? id : null,
+            getRole: () => null,
+            getUser: () => null,
+        },
+    });
+}
+
+test('direct gameplay channel ID repairs saved selection without the Discord channel picker', async () => {
+    const f = await fixture({ enabled: false });
+    f.records.get(f.configKey).gameplayChannelId = f.config.rolesChannelId;
+    const configure = configureInteraction(f, ` ${gameplayChannelId} `);
+    await onboardingCommand.execute(configure);
+    assert.equal(f.records.get(f.configKey).gameplayChannelId, gameplayChannelId);
+    assert.equal(f.records.get(f.configKey).enabled, false);
+    assert.equal(f.records.get(f.configKey).gameplayRoleId, gameplayRoleId);
+    assert.equal(f.calls.length, 0);
+    assert.ok(configure.replies.at(-1)[1].embeds);
+});
+
+test('direct channel configuration rejects invalid, inaccessible, non-text and conflicting channels without saving', async () => {
+    for (const kind of ['invalid', 'missing', 'voice', 'forbidden', 'conflicting']) {
+        const f = await fixture({ enabled: false });
+        const before = structuredClone(f.records.get(f.configKey));
+        if (kind === 'missing') f.guild.channels.fetch = async () => null;
+        if (kind === 'voice') f.channels.gameplay.type = ChannelType.GuildVoice;
+        if (kind === 'forbidden') f.guild.channels.fetch = async () => {
+            throw Object.assign(new Error('Missing access'), { code: 50001 });
+        };
+        const configure = configureInteraction(f, kind === 'invalid' ? 'not-an-id' : gameplayChannelId,
+            kind === 'conflicting' ? f.channels.roles : null);
+        await onboardingCommand.execute(configure);
+        assert.match(configure.replies.at(-1)[1].content, /Onboarding could not complete:/, kind);
+        assert.deepEqual(f.records.get(f.configKey), before, kind);
+    }
+});
+
 test('real PostgreSQL adapter propagates strict onboarding read failures while preserving legacy default behavior', async () => {
     const db = new PostgreSQLDatabase();
     assert.equal(await db.get(getOnboardingConfigKey(guildId), null), null);
