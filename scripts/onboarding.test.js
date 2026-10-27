@@ -164,12 +164,17 @@ function interaction(f, overrides = {}) {
 
 test('known server defaults are correct and disabled; other servers are not preconfigured', async () => {
     const f = await fixture({ enabled: false });
+    f.records.delete(f.configKey);
     const config = await getOnboardingConfig(f.client, guildId);
     assert.equal(config.enabled, false);
     assert.equal(config.applicationChannelId, '1564732887742554122');
     assert.equal(config.rulesChannelId, '1564689977307308162');
     assert.equal(config.reviewChannelId, '1564658929483386930');
     assert.equal(config.welcomeMessageId, '1564660152706011252');
+    assert.equal(config.gameplayChannelId, '1564736135899517099');
+    assert.equal(config.gameplayRoleId, '1564736300269965432');
+    await saveOnboardingConfig(f.client, guildId, { ...config, gameplayChannelId: '1564658925591204099' });
+    assert.equal((await getOnboardingConfig(f.client, guildId)).gameplayChannelId, '1564658925591204099');
     const other = await getOnboardingConfig(f.client, '1564658925591204099');
     assert.equal(other.enabled, false);
     assert.equal(other.verifiedRoleId, undefined);

@@ -24,8 +24,8 @@ const defaults = {
     verifiedRoleId: '1564658925591204012',
     reviewerRoleIds: ['1564658925591204017', '1564658925591204016', '1564658925591204015'],
     gameplayCategoryId: '1564732192129679480',
-    gameplayChannelId: null,
-    gameplayRoleId: null,
+    gameplayChannelId: '1564736135899517099',
+    gameplayRoleId: '1564736300269965432',
     gameBotUserId: '1562105059238744185',
 };
 const emptyDefaults = {

@@ -99,9 +99,10 @@ All shared public channels must remain appropriate for minors; content filtering
 and Discord age-restricted channels must be configured separately.
 
 For the PokeGalaxy server, the supplied channel/verified-role/reviewer-role IDs
-are built into disabled defaults. The missing settings are a shared restricted
-gameplay **text channel** inside category `1564732192129679480` and a neutral
-gameplay-access **role**. Use a neutral name rather than a public age label; Discord
+are built into disabled defaults. Restricted gameplay uses the supplied Bot Lounge
+channel `1564736135899517099` inside category `1564732192129679480` and access role
+`1564736300269965432`. Saved dashboard settings take precedence over defaults.
+Use a neutral role name rather than a public age label; Discord
 roles are not confidential. The dedicated role is granted before the verified
 role when an approved applicant reports under 18.
 
