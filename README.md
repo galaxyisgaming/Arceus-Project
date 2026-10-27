@@ -8,6 +8,15 @@
 
 ## Table of Contents
 
+Arceus commands are slash-only. Prefix messages such as `!shop`, `!help`,
+`!play`, and custom guild prefixes do not execute commands or receive command
+redirects. Use `/` to choose an Arceus command. Onboarding forms, buttons,
+reaction roles, counting, and message leveling remain active independently.
+Legacy prefix configuration is retained for compatibility but does not enable
+prefix dispatch.
+
+Validate with `node --test scripts/message-commands.test.js scripts/onboarding.test.js scripts/reaction-roles.test.js`.
+
 - [Features Overview](#features-overview)
 - [Quick Setup](#quick-setup)
 - [Manual Installation Steps](#manual-installation-steps)
@@ -257,7 +266,7 @@ Music uses [Lavalink v4](https://github.com/lavalink-devs/Lavalink) via [Riffy](
    ```
    Remove or rename `lavalink/nodes.json` so the bot falls back to those env vars.
 3. Override nodes inline with `LAVALINK_NODES` (JSON array) or point at another file with `LAVALINK_NODES_FILE`.
-4. Use `/play <song>` from a voice channel, or `/join` to connect without playing. Prefix shortcuts: `join`, `np`, `leave`, `pause`, `resume`, `skip`, `stop`, `volume <0-100>`, or `music <subcommand>`. Use `/nowplaying` and `/queue` for status; `/music` for loop, shuffle, seek, and other controls.
+4. Use `/play <song>` from a voice channel, or `/join` to connect without playing. Commands are slash-only; music prefix shortcuts are disabled. Use `/nowplaying` and `/queue` for status; `/music` for loop, shuffle, seek, and other controls.
 
 ### Using GitHub Container Registry
 
