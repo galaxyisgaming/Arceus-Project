@@ -1,8 +1,8 @@
 import { ChannelType, EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import {
-    getOnboardingConfig, saveOnboardingConfig, validateOnboardingSetup,
+    getOnboardingConfig, saveOnboardingConfig, validateOnboardingSetup, preapproveOnboarding,
 } from '../../services/onboardingService.js';
-import { onboardingPanel, onboardingError } from '../../handlers/onboarding.js';
+import { onboardingPanel, onboardingError, serverRulesPayload } from '../../handlers/onboarding.js';
 
 const channelOptions = [
     ['application', 'Member-facing application channel'],
@@ -18,6 +18,8 @@ export default {
         .setName('onboarding').setDescription('Configure PokeGalaxy member onboarding')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addSubcommand(sub => sub.setName('dashboard').setDescription('Show onboarding configuration and activation requirements'))
+        .addSubcommand(sub => sub.setName('preapprove').setDescription('Server owner only: mark a current member as personally vetted')
+            .addUserOption(option => option.setName('member').setDescription('Member you personally vetted').setRequired(true)))
         .addSubcommand(sub => {
             sub.setName('configure').setDescription('Save onboarding destinations without changing Discord permissions');
             for (const [name, description] of channelOptions) {
@@ -36,6 +38,7 @@ export default {
                 .addStringOption(option => option.setName('rules-version').setDescription('Version of the rules members must accept'));
         })
         .addSubcommand(sub => sub.setName('check').setDescription('Validate channels, roles, privacy and welcome embed without enabling'))
+        .addSubcommand(sub => sub.setName('rules').setDescription('Publish or update the approved PokeGalaxy server rules'))
         .addSubcommand(sub => sub.setName('panel').setDescription('Post or update the member-facing onboarding panel'))
         .addSubcommand(sub => sub.setName('enable').setDescription('Enable onboarding after all configuration checks pass'))
         .addSubcommand(sub => sub.setName('disable').setDescription('Disable onboarding; does not remove any member roles')),
@@ -49,6 +52,19 @@ export default {
             const { client, guild } = interaction;
             const config = await getOnboardingConfig(client, guild.id);
             const action = interaction.options.getSubcommand();
+            if (action === 'preapprove') {
+                if (interaction.user.id !== guild.ownerId) throw new Error('Only this server owner can preapprove a member.');
+                const user = interaction.options.getUser('member', true);
+                const member = await guild.members.fetch({ user: user.id, force: true });
+                await preapproveOnboarding(client, { id: interaction.user.id, guild }, member);
+                await interaction.editReply({
+                    content: `Preapproved <@${member.id}> for this join only. No roles granted yet. ` +
+                        `Ask them to use Begin / Check status in <#${config.applicationChannelId}>, ` +
+                        'accept the rules and confirm their age category. The full questionnaire and account-age review are skipped.',
+                    allowedMentions: { parse: [] },
+                });
+                return;
+            }
             if (action === 'configure') {
                 if (config.enabled) throw new Error('Disable onboarding before changing its configuration.');
                 for (const [name] of channelOptions) {
@@ -112,6 +128,26 @@ export default {
             } else if (action === 'disable') {
                 config.enabled = false;
                 await saveOnboardingConfig(client, guild.id, config);
+            } else if (action === 'rules') {
+                const channel = await guild.channels.fetch(config.rulesChannelId);
+                if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Configure a text rules channel.');
+                const payload = serverRulesPayload(config);
+                let message;
+                if (config.rulesMessageId) {
+                    try {
+                        message = await channel.messages.fetch(config.rulesMessageId);
+                    } catch (error) {
+                        if (error.code !== 10008) throw error;
+                    }
+                }
+                if (message) {
+                    if (message.author.id !== client.user.id) throw new Error('The saved rules message is not owned by Arceus.');
+                    await message.edit(payload);
+                } else {
+                    message = await channel.send(payload);
+                    config.rulesMessageId = message.id;
+                    await saveOnboardingConfig(client, guild.id, config);
+                }
             } else if (action === 'panel') {
                 const channel = await guild.channels.fetch(config.applicationChannelId);
                 if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Configure a text application channel.');
@@ -149,7 +185,7 @@ export default {
                         { name: 'Verified role', value: config.verifiedRoleId ? `<@&${config.verifiedRoleId}>` : 'Not configured', inline: true },
                         { name: 'Gameplay access role', value: config.gameplayRoleId ? `<@&${config.gameplayRoleId}>` : 'Not configured', inline: true },
                         { name: 'Reviewer roles', value: config.reviewerRoleIds.map(id => `<@&${id}>`).join(', ') || 'Not configured' },
-                        { name: 'Next steps', value: 'Configure missing settings, check channel permissions, run `/onboarding check`, post `/onboarding panel`, then `/onboarding enable`.' },
+                        { name: 'Next steps', value: 'Configure missing settings, check channel permissions, publish `/onboarding rules`, run `/onboarding check`, post `/onboarding panel`, then `/onboarding enable`.' },
                     ],
                     color: 0x9b59b6,
                 })],

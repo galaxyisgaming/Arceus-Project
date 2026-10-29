@@ -196,6 +196,29 @@ export async function agreeToRules(client, member) {
     });
 }
 
+export async function preapproveOnboarding(client, owner, member) {
+    if (owner.guild.id !== member.guild.id || owner.id !== member.guild.ownerId) {
+        throw new Error('Only this server owner can preapprove a member.');
+    }
+    return serializeOnboarding(member.guild.id, member.id, async () => {
+        const config = await getOnboardingConfig(client, member.guild.id);
+        assertScreeningAccess(config, member, true);
+        await validateOnboardingSetup(client, member.guild, config);
+        const previous = await getOnboardingMember(client, member.guild.id, member.id);
+        if (member.roles.cache.has(config.verifiedRoleId)) throw new Error('This member already has Verified access.');
+        if (isCurrentJoin(previous, member) && !['awaiting_rules', 'questionnaire'].includes(previous.status)) {
+            throw new Error('This member already submitted screening; use the private review queue.');
+        }
+        return saveMember(client, member.guild.id, member.id, {
+            ...(isCurrentJoin(previous, member) ? previous : {
+                status: 'awaiting_rules', id: randomUUID(), joinedTimestamp: member.joinedTimestamp,
+                createdAt: Date.now(), policyVersion: POLICY_VERSION,
+            }),
+            preapprovedBy: owner.id, preapprovedAt: Date.now(),
+        });
+    });
+}
+
 export function evaluateScreening(answers, createdTimestamp, now = Date.now(), minDays = 7) {
     const invited = String(answers.invited || '').trim().toLowerCase();
     const ageGroup = String(answers.ageGroup || '').trim().toLowerCase();
@@ -245,20 +268,28 @@ export async function submitScreening(client, member, answers) {
         }
         if (record.status === 'approving') return approveRecord(client, member.guild, member, config, record, record.reviewedBy);
         if (['approved', 'pending_review', 'declined'].includes(record.status)) return record;
-        const evaluation = evaluateScreening(answers, member.user.createdTimestamp, Date.now(), config.minAccountAgeDays);
+        const preapproved = record.preapprovedBy && record.preapprovedBy === member.guild.ownerId;
+        if (preapproved && ![ADULT, MINOR].includes(String(answers.ageGroup || '').trim().toLowerCase())) {
+            throw new Error('Enter 18+ or under 18; do not provide an exact age or birthday.');
+        }
+        const evaluation = preapproved ? {
+            route: 'approve', reasons: [], ageGroup: String(answers.ageGroup).trim().toLowerCase(),
+            invited: 'yes', interest: 'other',
+        } : evaluateScreening(answers, member.user.createdTimestamp, Date.now(), config.minAccountAgeDays);
         if (evaluation.route === 'correction') throw new Error(evaluation.reason);
         const submitted = {
             ...record, status: 'pending_review', submittedAt: Date.now(),
             reviewedBy: null, decisionReason: null, decisionAt: null,
             answers: {
                 invited: evaluation.invited, ageGroup: evaluation.ageGroup, interest: evaluation.interest,
-                inviter: String(answers.inviter || '').trim().slice(0, 100), conduct: 'yes',
+                inviter: preapproved ? 'Owner-vetted member' : String(answers.inviter || '').trim().slice(0, 100), conduct: 'yes',
             },
             accountCreatedAt: member.user.createdTimestamp,
             reviewReasons: evaluation.reasons,
         };
         await saveMember(client, member.guild.id, member.id, submitted);
-        if (evaluation.route === 'approve') return approveRecord(client, member.guild, member, config, submitted, 'automatic');
+        if (evaluation.route === 'approve') return approveRecord(client, member.guild, member, config, submitted,
+            preapproved ? record.preapprovedBy : 'automatic');
         return submitted;
     });
 }

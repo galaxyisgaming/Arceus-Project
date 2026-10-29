@@ -92,6 +92,12 @@ Onboarding is **disabled by default**. It does not create/change Discord channel
 permissions, roles, webhooks or AutoMod rules, and does not remove existing members'
 roles. Configure permissions deliberately before enabling it.
 
+When enabled, new human members receive a DM explaining how to find the
+**Begin / Check status** panel and private form. Discord does not allow bots to
+open a form automatically on join. Closed DMs are logged and do not prevent
+using the server panel; keep that channel visible to newcomers. No access is
+granted just for receiving a prompt.
+
 The flow is rules agreement -> private five-field screening form -> automatic
 approval or private staff review -> optional roles -> a link to the **existing**
 PokeGalaxy welcome summary. The form asks invitation yes/no, optional inviter,
@@ -118,12 +124,20 @@ role when an approved applicant reports under 18.
 Administrator commands:
 
 - `/onboarding dashboard`: inspect settings.
+- `/onboarding preapprove member:@user`: server owner only; personally vet a
+  current member for this join. They still finish Discord screening, accept the
+  current rules and submit a one-field age-category form, but skip the full
+  questionnaire and account-age review. It grants no roles by itself, cannot
+  override a submitted/declined application, and does not survive rejoining.
+  Typing "Galaxy" or "Hannah" as inviter never creates preapproval.
 - `/onboarding configure`: save channel, access-role, game-bot, reviewer-role,
   welcome-message or rules-version settings while disabled.
   If the gameplay channel is missing from Discord's picker, use
   `gameplay-channel-id:1564736135899517099`. Arceus fetches and validates the
   server text channel before saving; the usual permission checks still apply.
 - `/onboarding check`: validate setup without enabling it.
+- `/onboarding rules`: publish/update Arceus's approved ten-rule message in the
+  configured rules channel. It edits only its own saved message, not staff posts.
 - `/onboarding panel`: post/update the member-facing screening panel.
 - `/onboarding enable`: validate setup and the panel, then enable.
 - `/onboarding disable`: stop onboarding without removing any member's roles.
@@ -168,6 +182,40 @@ Review cards are restored after restart, and member status is available through
 the onboarding panel even when DMs are closed. Native Discord membership screening
 must also be completed. Role selection is optional: the welcome button does not
 require choosing any notification role. No PokeGalaxy economy/game data is edited.
+
+#### Approved server rules and Discord setup
+
+The Arceus panel and `/onboarding rules` share the same approved rule text.
+Copy these ten entries into Discord's native Rules Screening too:
+
+1. **Respect fellow trainers.** No harassment, hate speech, threats or discrimination.
+2. **Keep content appropriate.** No explicit material, graphic content or harmful links.
+3. **Protect privacy.** Never share someone's personal information, credentials or private messages without permission.
+4. **Play fairly.** No self-bots, unauthorized automation, exploits or abuse of alternate accounts.
+5. **Report bugs privately.** Don't repeatedly exploit errors or publicly share duplication methods.
+6. **Keep trades honest.** No scams, impersonation, real-money sales or account trading.
+7. **Use the correct channels.** Keep bot commands, support requests and feedback in their designated spaces.
+8. **Avoid spam.** No flooding, unsolicited advertising or unnecessary mentions.
+9. **Follow staff guidance and Discord's rules.** Appeal moderation decisions respectfully through the designated support route.
+10. **Remember this is closed testing.** Features and balance may change; any planned progress resets should be announced beforehand.
+
+In Discord Server Settings, enable Community if required, select the existing
+rules channel, then configure Rules Screening (the UI may group it under
+Safety Setup). Enable requiring members to accept the rules before talking.
+In native Onboarding/Server Guide, make rules and the application channel easy
+to find. Interest/notification questions must not grant Verified, Trainer,
+gameplay access or reviewer roles. Use an account with no staff/access roles
+to test: administrators and manually verified members are not representative.
+
+After checking the channel permissions above, run `/onboarding dashboard`,
+`/onboarding check`, `/onboarding rules`, `/onboarding panel`, then
+`/onboarding enable`. If updating an existing rules agreement, disable onboarding
+and configure a new `rules-version` (for example `2026-10-29`) before publishing
+and enabling again. Existing approved members keep their roles.
+The dashboard's saved status, not the disabled source-code default, determines
+whether onboarding is active. Enabling does not retroactively prompt yesterday's
+joins; members without access can use the panel themselves. Existing Verified
+members keep access and do not have to repeat screening.
 
 Run local policy, UI, failure-path and regression checks:
 

@@ -5,11 +5,13 @@ import {
     getOnboardingConfig, saveOnboardingConfig, beginOnboarding, agreeToRules, submitScreening,
     getOnboardingMember, reviewOnboarding, evaluateScreening, validateOnboardingSetup,
     assertOnboardingRoleAllowed, assertOnboardingMemberApproved,
+    preapproveOnboarding,
 } from '../src/services/onboardingService.js';
 import { getOnboardingConfigKey, getOnboardingMemberKey } from '../src/utils/database/keys.js';
 import {
     onboardingPanel, onboardingStatusPayload, ensureReviewCard, reconcileOnboarding,
     handleOnboardingButton, handleOnboardingForm, handleOnboardingReview, reviewCard,
+    SERVER_RULES, serverRulesPayload, notifyOnboardingStart,
 } from '../src/handlers/onboarding.js';
 import onboardingCommand from '../src/commands/Verification/onboarding.js';
 import { verifyUser, autoVerifyOnJoin } from '../src/services/verificationService.js';
@@ -58,7 +60,7 @@ async function fixture({ enabled = true, ageDays = 30 } = {}) {
         roles: { highest: { position: 100 } },
     };
     const guild = {
-        id: guildId, client, roles: { cache: roles, async fetch(id) { return roles.get(id); } },
+        id: guildId, ownerId: '1564658925591204082', client, roles: { cache: roles, async fetch(id) { return roles.get(id); } },
         members: { async fetchMe() { return me; } }, channels: { cache: new Collection() },
     };
     client.guilds.cache.set(guildId, guild);
@@ -459,12 +461,147 @@ test('review handlers require the private queue and persist the staff decision',
 test('new commands validate their registration payload and disabled configuration is persistent', async () => {
     const command = onboardingCommand.data.toJSON();
     assert.equal(command.name, 'onboarding');
-    assert.deepEqual(command.options.map(option => option.name), ['dashboard', 'configure', 'check', 'panel', 'enable', 'disable']);
+    assert.deepEqual(command.options.map(option => option.name), ['dashboard', 'preapprove', 'configure', 'check', 'rules', 'panel', 'enable', 'disable']);
     const f = await fixture({ enabled: false });
     await saveOnboardingConfig(f.client, guildId, f.config);
     assert.equal(f.records.get(f.configKey).enabled, false);
     await assert.rejects(beginOnboarding(f.client, f.applicant), /not enabled/);
     assert.equal(f.calls.length, 0);
+});
+
+test('approved rules are identical in the screening panel and published rules payload', async () => {
+    const f = await fixture();
+    assert.equal(SERVER_RULES.length, 10);
+    const payload = serverRulesPayload(f.config);
+    const panel = onboardingPanel(f.config, guildId);
+    assert.deepEqual(panel.embeds[1].toJSON(), payload.embeds[0].toJSON());
+    assert.equal(payload.embeds[0].data.description.split('\n\n').length, 10);
+    assert(payload.embeds[0].data.description.includes('No self-bots, unauthorized automation'));
+    assert(payload.embeds[0].data.description.includes('planned progress resets should be announced'));
+    assert(payload.embeds[0].data.description.length <= 4096);
+    assert(panel.embeds.reduce((sum, embed) => sum + embed.length, 0) <= 6000);
+    assert.deepEqual(payload.allowedMentions, { parse: [] });
+});
+
+test('only the server owner can preapprove; no roles until rules and category are completed', async () => {
+    for (const ageGroup of ['18+', 'under 18']) {
+        const f = await fixture({ ageDays: 1 });
+        const owner = { id: f.guild.ownerId, guild: f.guild };
+        await assert.rejects(preapproveOnboarding(f.client, f.reviewer, f.applicant), /Only this server owner/);
+        assert(!f.records.has(f.memberKey));
+        const preapproved = await preapproveOnboarding(f.client, owner, f.applicant);
+        assert.equal(preapproved.preapprovedBy, owner.id);
+        assert.equal(f.calls.length, 0);
+        await assert.rejects(submitScreening(f.client, f.applicant, { ageGroup }), /agree to the current rules/);
+        f.applicant.pending = true;
+        await assert.rejects(agreeToRules(f.client, f.applicant), /Discord server rules screening/);
+        f.applicant.pending = false;
+        await agreeToRules(f.client, f.applicant);
+        const open = interaction(f);
+        await handleOnboardingButton(open, f.client, ['form']);
+        assert.equal(open.replies.at(-1)[1].components.length, 1, 'preapproved form asks only access category');
+        await assert.rejects(submitScreening(f.client, f.applicant, { ageGroup: 'unknown' }), /Enter 18\+/);
+        const form = interaction(f, { fields: { getTextInputValue: key => {
+            assert.equal(key, 'ageGroup');
+            return ageGroup;
+        } } });
+        await handleOnboardingForm(form, f.client);
+        assert.equal(f.records.get(f.memberKey).status, 'approved');
+        assert.equal(f.records.get(f.memberKey).reviewedBy, owner.id);
+        assert(f.applicant.owned.has(f.config.verifiedRoleId));
+        assert.equal(f.applicant.owned.has(f.config.gameplayRoleId), ageGroup === 'under 18');
+    }
+});
+
+test('preapproval expires on rejoin and inviter text never enables the shortcut', async () => {
+    const f = await fixture({ ageDays: 1 });
+    await preapproveOnboarding(f.client, { id: f.guild.ownerId, guild: f.guild }, f.applicant);
+    f.applicant.joinedTimestamp += 1000;
+    await agreeToRules(f.client, f.applicant);
+    assert.equal(f.records.get(f.memberKey).preapprovedBy, undefined);
+    const submitted = await submitScreening(f.client, f.applicant, { ...validAnswers, invited: 'yes', inviter: 'Galaxy / Hannah' });
+    assert.equal(submitted.status, 'pending_review');
+    assert(!f.calls.some(call => call[0] === 'add'));
+    await assert.rejects(preapproveOnboarding(f.client, { id: f.guild.ownerId, guild: f.guild }, f.applicant), /private review queue/);
+});
+
+test('preapproval fails closed on disabled onboarding, bots, database failures and changed rules', async () => {
+    const f = await fixture({ ageDays: 1 });
+    const owner = { id: f.guild.ownerId, guild: f.guild };
+    f.applicant.user.bot = true;
+    await assert.rejects(preapproveOnboarding(f.client, owner, f.applicant), /Bots/);
+    f.applicant.user.bot = false;
+    f.records.get(f.configKey).enabled = false;
+    await assert.rejects(preapproveOnboarding(f.client, owner, f.applicant), /not enabled/);
+    f.records.get(f.configKey).enabled = true;
+    const save = f.client.db.set;
+    f.client.db.set = async () => false;
+    await assert.rejects(preapproveOnboarding(f.client, owner, f.applicant), /could not be saved/);
+    assert(!f.records.has(f.memberKey));
+    f.client.db.set = save;
+    await preapproveOnboarding(f.client, owner, f.applicant);
+    await agreeToRules(f.client, f.applicant);
+    f.records.get(f.configKey).rulesVersion = 'updated';
+    await assert.rejects(submitScreening(f.client, f.applicant, { ageGroup: '18+' }), /agree to the current rules/);
+    assert(!f.calls.some(call => call[0] === 'add'));
+});
+
+test('preapprove slash command rejects non-owner administrators and persists owner-authorized shortcuts', async () => {
+    const f = await fixture();
+    const command = user => interaction(f, {
+        user, memberPermissions: new PermissionsBitField(PermissionFlagsBits.Administrator),
+        options: { getSubcommand: () => 'preapprove', getUser: () => f.applicant.user },
+    });
+    const denied = command(f.reviewer.user);
+    await onboardingCommand.execute(denied);
+    assert.match(denied.replies.at(-1)[1].content, /Only this server owner/);
+    const allowed = command({ id: f.guild.ownerId });
+    await onboardingCommand.execute(allowed);
+    assert.match(allowed.replies.at(-1)[1].content, /No roles granted yet/);
+    assert.equal(f.records.get(f.memberKey).preapprovedBy, f.guild.ownerId);
+    assert.deepEqual(allowed.replies.at(-1)[1].allowedMentions, { parse: [] });
+});
+
+test('join instructions link to the server panel without granting roles or exposing answers', async () => {
+    const f = await fixture();
+    await beginOnboarding(f.client, f.applicant, true);
+    assert.equal(await notifyOnboardingStart(f.applicant, f.config), true);
+    const payload = f.calls.find(call => call[0] === 'dm')[2];
+    assert(payload.content.includes('Complete Discord server rules screening first'));
+    assert(payload.content.includes('Begin / Check status'));
+    const links = payload.components[0].toJSON().components;
+    assert(links[1].url.startsWith(`https://discord.com/channels/${guildId}/${f.config.applicationChannelId}`));
+    assert.deepEqual(payload.allowedMentions, { parse: [] });
+    assert(!f.calls.some(call => call[0] === 'add'));
+    f.applicant.send = async () => { throw Object.assign(new Error('DM closed'), { code: 50007 }); };
+    assert.equal(await notifyOnboardingStart(f.applicant, f.config), false);
+    assert.equal(f.records.get(f.memberKey).status, 'awaiting_rules');
+    const error = Object.assign(new Error('Unexpected Discord failure'), { code: 50013 });
+    f.applicant.send = async () => { throw error; };
+    await assert.rejects(notifyOnboardingStart(f.applicant, f.config), error);
+});
+
+test('rules slash command publishes once, edits its owned message, and refuses foreign messages', async () => {
+    const f = await fixture({ enabled: false });
+    const invoke = async () => {
+        const command = interaction(f, {
+            memberPermissions: new PermissionsBitField(PermissionFlagsBits.Administrator),
+            options: { getSubcommand: () => 'rules' },
+        });
+        await onboardingCommand.execute(command);
+        return command;
+    };
+    await invoke();
+    const messageId = f.records.get(f.configKey).rulesMessageId;
+    assert(messageId);
+    const message = await f.channels.rules.messages.fetch(messageId);
+    assert.deepEqual(message.payload.embeds[0].toJSON(), serverRulesPayload(f.config).embeds[0].toJSON());
+    await invoke();
+    assert.equal(f.calls.filter(call => call[0] === 'send' && call[1] === 'rules').length, 1);
+    assert.equal(f.records.get(f.configKey).enabled, false);
+    message.author = { id: 'other' };
+    assert.match((await invoke()).replies.at(-1)[1].content, /not owned by Arceus/);
+    assert(!f.calls.some(call => call[0] === 'add'));
 });
 
 test('actual slash enable refuses incomplete setup without mutating member access', async () => {

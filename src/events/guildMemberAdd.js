@@ -8,6 +8,7 @@ import { getServerCounters, updateCounter } from '../services/serverstatsService
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import { getOnboardingConfig, beginOnboarding } from '../services/onboardingService.js';
+import { notifyOnboardingStart } from '../handlers/onboarding.js';
 
 export default {
   name: Events.GuildMemberAdd,
@@ -20,7 +21,16 @@ export default {
         const config = await getGuildConfig(member.client, guild.id);
         const onboarding = await getOnboardingConfig(member.client, guild.id);
         const onboardingRequired = onboarding.enabled && !user.bot;
-        if (onboardingRequired) await beginOnboarding(member.client, member, true);
+        if (onboardingRequired) {
+            const record = await beginOnboarding(member.client, member, true);
+            if (record.status === 'awaiting_rules') {
+                try {
+                    await notifyOnboardingStart(member, onboarding);
+                } catch (error) {
+                    logger.error(`Cannot deliver onboarding instructions to ${member.id} in ${guild.id}:`, error);
+                }
+            }
+        }
         
         const welcomeConfig = await getWelcomeConfig(member.client, guild.id);
         
