@@ -18,16 +18,6 @@ export const SUBMISSION_FORMS = {
             { id: 'environment', label: 'Where and when? (optional)', placeholder: 'Feature, device/platform, approximate time', required: false },
         ],
     },
-    feedback: {
-        title: 'Submit Feedback',
-        description: 'Share your impressions, feature ideas, or balance suggestions privately with staff.',
-        fields: [
-            { id: 'impression', label: 'First impression / overall experience', placeholder: 'Rate 1-5 if you like. What have you enjoyed most?', required: true },
-            { id: 'features', label: 'What features would you like added?', placeholder: 'New features or functions you would find useful', required: false },
-            { id: 'balance', label: 'What would you change or balance?', placeholder: 'Too strong, too weak, unfair, or confusing? Why?', required: false },
-            { id: 'other', label: 'Anything else? (optional)', placeholder: 'You can leave the other optional questions blank.', required: false },
-        ],
-    },
 };
 
 function formFor(type) {
@@ -40,33 +30,40 @@ function formFor(type) {
 
 export function submissionPanel(type) {
     const form = formFor(type);
+    return buildSubmissionPanel(form, `submission:${type}`);
+}
+
+export function buildSubmissionPanel(form, customId) {
     return {
         embeds: [new EmbedBuilder()
             .setTitle(form.title)
             .setDescription(`${form.description}\n\nScreenshots or other files are optional (up to 3 files, 8 MiB total). Please do not include passwords or other sensitive information.`)
-            .setColor(type === 'bug' ? 0xED4245 : 0x5865F2)],
+            .setColor(0x5865F2)],
         components: [new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-                .setCustomId(`submission:${type}`)
-                .setLabel(form.title)
+                .setCustomId(customId)
+                .setLabel(form.buttonLabel || form.title)
                 .setStyle(ButtonStyle.Primary),
         )],
         allowedMentions: { parse: [] },
     };
 }
 
-export function submissionModal(type) {
-    const form = formFor(type);
+export function submissionModal(type, source = 'panel') {
+    return buildSubmissionModal(formFor(type), `submission_form:${type}:${source}`);
+}
+
+export function buildSubmissionModal(form, customId) {
     const modal = new ModalBuilder()
-        .setCustomId(`submission_form:${type}`)
-        .setTitle(form.title);
+        .setCustomId(customId)
+        .setTitle(form.title.slice(0, 45));
     for (const field of form.fields) {
         modal.addLabelComponents(new LabelBuilder()
             .setLabel(field.label)
             .setTextInputComponent(new TextInputBuilder()
                 .setCustomId(field.id)
                 .setStyle(TextInputStyle.Paragraph)
-                .setPlaceholder(field.placeholder)
+                .setPlaceholder(field.placeholder || 'Your answer')
                 .setMaxLength(1000)
                 .setRequired(field.required)));
     }
@@ -97,13 +94,14 @@ export async function validateSubmissionChannel(guild, channel, { privateReview 
     return channel;
 }
 
-async function activeConfig(interaction, client, type) {
+export async function activeBugConfig(interaction, client, { requirePanel = false } = {}) {
+    const type = 'bug';
     formFor(type);
     if (!interaction.inGuild()) {
         throw createError('Submission outside guild', ErrorTypes.VALIDATION, 'Use this form in a server.');
     }
     const config = (await getGuildConfig(client, interaction.guildId)).submissions?.[type];
-    if (!config || config.panelChannelId !== interaction.channelId) {
+    if (!config || (requirePanel && config.panelChannelId !== interaction.channelId)) {
         throw createError('Submission panel disabled or moved', ErrorTypes.CONFIGURATION,
             'This submission panel is no longer active. Ask staff for the current panel.');
     }
@@ -111,14 +109,20 @@ async function activeConfig(interaction, client, type) {
 }
 
 export async function handleSubmissionButton(interaction, client, [type]) {
-    await activeConfig(interaction, client, type);
+    formFor(type);
+    await activeBugConfig(interaction, client, { requirePanel: true });
     await interaction.showModal(submissionModal(type));
 }
 
-export async function handleSubmissionForm(interaction, client, [type]) {
+export async function handleSubmissionForm(interaction, client, [type, source = 'panel']) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const config = await activeConfig(interaction, client, type);
+    formFor(type);
+    const config = await activeBugConfig(interaction, client, { requirePanel: source !== 'direct' });
     const form = formFor(type);
+    return deliverSubmission(interaction, config, form, 'bug report');
+}
+
+export async function deliverSubmission(interaction, config, form, kind) {
     const fields = form.fields.map(field => {
         const value = interaction.fields.getTextInputValue(field.id).trim();
         if ((field.required && !value) || value.length > 1000) {
@@ -127,6 +131,9 @@ export async function handleSubmissionForm(interaction, client, [type]) {
         }
         return { name: field.label, value };
     }).filter(field => field.value);
+    if (!fields.length) {
+        throw createError('Empty submission', ErrorTypes.VALIDATION, 'Please answer at least one question.');
+    }
     const attachments = [...(interaction.fields.getUploadedFiles('attachments')?.values() ?? [])];
     if (attachments.length > 3 || attachments.reduce((total, file) => total + file.size, 0) > MAX_ATTACHMENT_BYTES) {
         throw createError('Submission attachments too large', ErrorTypes.VALIDATION,
@@ -138,12 +145,12 @@ export async function handleSubmissionForm(interaction, client, [type]) {
     // Re-upload files so the review does not depend on expiring modal attachment URLs.
     const message = await channel.send({
         embeds: [new EmbedBuilder({
-            title: type === 'bug' ? 'Bug Report' : 'Community Feedback',
+            title: form.title,
             description: `Submitted by <@${interaction.user.id}> (ID: ${interaction.user.id})`,
             fields,
             footer: { text: `Report ID: ${interaction.id}` },
             timestamp: new Date().toISOString(),
-            color: type === 'bug' ? 0xED4245 : 0x5865F2,
+            color: 0x5865F2,
         })],
         files: attachments.map(file => ({ attachment: file.url, name: file.name })),
         allowedMentions: { parse: [] },
@@ -151,7 +158,7 @@ export async function handleSubmissionForm(interaction, client, [type]) {
         nonce: interaction.id,
     });
     await interaction.editReply({
-        content: `Thank you! Your ${type === 'bug' ? 'bug report' : 'feedback'} was sent privately to staff.\nReport ID: ${interaction.id}`,
+        content: `Thank you! Your ${kind} was sent privately to staff.\nReport ID: ${interaction.id}`,
         allowedMentions: { parse: [] },
     });
     return message;

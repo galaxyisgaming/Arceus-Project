@@ -18,7 +18,6 @@ import {
 } from '../../utils/database.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import appDashboard from './modules/app_dashboard.js';
-import submissions from './modules/submissions.js';
 
 function getApplicationStatusPresentation(statusValue) {
     const normalized = typeof statusValue === 'string' ? statusValue.trim().toLowerCase() : 'unknown';
@@ -41,7 +40,6 @@ export default {
     .setName("app-admin")
     .setDescription("Manage staff applications")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommandGroup(submissions.data)
     .addSubcommand((subcommand) =>
         subcommand
             .setName("setup")
@@ -106,10 +104,6 @@ export default {
     execute: withErrorHandling(async (interaction) => {
         if (!interaction.inGuild()) {
             return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'This command can only be used in a server.' });
-        }
-
-        if (interaction.options.getSubcommandGroup(false) === 'submissions') {
-            return await submissions.execute(interaction);
         }
 
         const { options, guild, member } = interaction;
