@@ -34,13 +34,13 @@ function fixture({ counting = false } = {}) {
     return { event, calls, client, message };
 }
 
-test('Prefix commands never dispatch or send command redirects, but message XP remains active', async () => {
+test('Messages never dispatch prefix commands, send redirects or award retired leveling XP', async () => {
     for (const content of ['!shop', '!help', '!play song', '!sb 1', '!pause', '?help', '<@123> help', 'hello']) {
         const { event, calls, client, message } = fixture();
         await event.execute({ ...message, content }, client);
         assert.equal(calls.commands, 0, content);
         assert.equal(calls.sends, 0, content);
-        assert.equal(calls.xp, 15, content);
+        assert.equal(calls.xp, 0, content);
         assert.deepEqual(calls.errors, [], content);
     }
 });
@@ -61,4 +61,57 @@ test('Bot messages and DMs remain ignored', async () => {
     assert.equal(calls.commands, 0);
     assert.equal(calls.xp, 0);
     assert.equal(calls.sends, 0);
+});
+
+test('startup no longer synchronizes level roles or touches stored leveling records', async () => {
+    const calls = { errors: [], sync: 0 };
+    const summary = new Proxy({}, { get: () => 0 });
+    const context = {
+        Events: { ClientReady: 'clientReady' },
+        config: { bot: { presence: {} } },
+        logger: { error: (...args) => calls.errors.push(args) },
+        startupLog() {},
+        reconcileReactionRoleMessages: async () => summary,
+        reconcileOnboarding: async () => {},
+        reconcileTicketPanels: async () => summary,
+        reconcileVerificationPanels: async () => summary,
+        migrateReactionPanels: async () => {},
+        reconcileReactionRolePanelHealth: async () => summary,
+        reconcileLevelRoles: async () => { calls.sync++; },
+    };
+    const readySource = readFileSync(new URL('../src/events/ready.js', import.meta.url), 'utf8');
+    const event = vm.runInNewContext(readySource
+        .replace(/^import[\s\S]*?;\r?\n/gm, '')
+        .replace('export default', 'const event =') + '\nevent;', context);
+    await event.execute({
+        user: { tag: 'Arceus', setPresence() {} },
+        guilds: { cache: { size: 1 } }, commands: { size: 96 },
+    });
+    assert.equal(calls.sync, 0);
+    assert.deepEqual(calls.errors, []);
+});
+
+test('member departure no longer deletes historical leveling data', async () => {
+    const calls = { deleted: 0, errors: [] };
+    const context = {
+        Events: { GuildMemberRemove: 'guildMemberRemove' },
+        logger: { debug() {}, error: (...args) => calls.errors.push(args) },
+        getWelcomeConfig: async () => ({}),
+        logEvent: async () => {},
+        EVENT_TYPES: { MEMBER_LEAVE: 'member.leave' },
+        getServerCounters: async () => [],
+        getGuildBirthdays: async () => ({}),
+        getUserApplications: async () => [],
+        deleteUserLevelData: async () => { calls.deleted++; },
+    };
+    const leaveSource = readFileSync(new URL('../src/events/guildMemberRemove.js', import.meta.url), 'utf8');
+    const event = vm.runInNewContext(leaveSource
+        .replace(/^import[\s\S]*?;\r?\n/gm, '')
+        .replace('export default', 'const event =') + '\nevent;', context);
+    await event.execute({
+        guild: { id: 'guild', memberCount: 1 }, client: {},
+        user: { id: 'user', tag: 'Trainer', toString: () => '<@user>', displayAvatarURL: () => null },
+    });
+    assert.equal(calls.deleted, 0);
+    assert.deepEqual(calls.errors, []);
 });

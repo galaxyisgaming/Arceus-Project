@@ -57,6 +57,11 @@ const VerificationConfigSchema = z
   })
   .optional();
 
+const SubmissionChannelsSchema = z.object({
+  panelChannelId: z.string().regex(/^\d{17,20}$/),
+  reviewChannelId: z.string().regex(/^\d{17,20}$/),
+}).nullable().optional();
+
 export const GuildConfigSchema = z
   .object({
     prefix: z.string().optional(),
@@ -76,7 +81,22 @@ export const GuildConfigSchema = z
     logging: LoggingConfigSchema.optional(),
     ticketLogging: TicketLoggingSchema.optional(),
     enableLogging: z.boolean().optional(),
-    verification: VerificationConfigSchema
+    verification: VerificationConfigSchema,
+    submissions: z.object({
+      bug: SubmissionChannelsSchema,
+    }).optional(),
+    surveys: z.record(z.string().regex(/^[a-z0-9-]{1,24}$/), z.object({
+      title: z.string().trim().min(1).max(45),
+      description: z.string().trim().min(1).max(1000),
+      questions: z.array(z.object({
+        label: z.string().trim().min(1).max(45),
+        required: z.boolean(),
+      })).min(1).max(4),
+      panelChannelId: z.string().regex(/^\d{17,20}$/),
+      reviewChannelId: z.string().regex(/^\d{17,20}$/),
+      enabled: z.boolean(),
+      revision: z.string().regex(/^\d{17,20}$/),
+    })).refine(surveys => Object.keys(surveys).length <= 25, 'A server can have at most 25 surveys').optional(),
   })
   .passthrough();
 

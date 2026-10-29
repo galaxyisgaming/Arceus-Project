@@ -11,7 +11,7 @@
 Arceus commands are slash-only. Prefix messages such as `!shop`, `!help`,
 `!play`, and custom guild prefixes do not execute commands or receive command
 redirects. Use `/` to choose an Arceus command. Onboarding forms, buttons,
-reaction roles, counting, and message leveling remain active independently.
+reaction roles, and counting remain active independently.
 Legacy prefix configuration is retained for compatibility but does not enable
 prefix dispatch.
 
@@ -25,6 +25,99 @@ Validate with `node --test scripts/message-commands.test.js scripts/onboarding.t
 - [Contributing](CONTRIBUTING.md)
 
 <a name="features-overview"></a>
+## Bug Reports and Feedback Surveys
+
+There are two dedicated slash commands: **`/survey`** for administrators to create
+and manage named surveys, and **`/bugreport`** for members to submit bugs.
+Both support member-facing buttons, optional attachments, private staff review
+messages, and confirmations visible only to the sender.
+
+Administrators with **Manage Server** configure bug reporting once:
+
+```text
+/bugreport setup panel-channel:#bug-reports review-channel:#staff-bugs
+```
+
+Create these channels first. The review channel must explicitly deny **View
+Channel** to `@everyone`; allow only the intended staff roles and Arceus. Arceus
+needs View Channel, Send Messages and Embed Links in both channels, plus Attach
+Files in the review channel. Member-facing and review channels must be different.
+Review-channel privacy and bot permissions are checked again on every submission.
+
+Members then use `/bugreport submit` from any server channel, or click the
+published button. The form asks what went wrong, reproduction steps, expected
+versus actual results, and optional platform/time details. Only administrators
+can run `/bugreport setup` or `/bugreport disable`; submitting is open to members.
+
+To create a survey:
+
+```text
+/survey create name:feedback panel-channel:#feedback review-channel:#staff-feedback
+```
+
+This opens an editor for the title, description, and **1-4 custom questions**.
+Enter one question per line, up to 45 characters per question; prefix a question
+with `*` to require an answer. The initial template asks about first impressions,
+feature requests, changes/balance, and what members enjoyed. For example:
+
+```text
+*First impression? Rate 1-5 if you like.
+What features would you like added?
+What would you change or balance?
+What have you enjoyed? Anything else?
+```
+
+Surveys start as **drafts**. Run `/survey dashboard` to select a survey and use
+**Edit Questions / Details**, **Publish / Enable**, or **Disable**. You can also use:
+
+```text
+/survey edit name:feedback
+/survey publish name:feedback
+/survey disable name:feedback
+```
+
+`edit` also accepts optional `panel-channel` and `review-channel` settings. Run
+`publish` after editing to post an updated panel. Existing buttons in the current
+panel channel always open the current questions. If questions change while
+someone is filling out a form, they must reopen it before submitting, so answers
+cannot be attributed to different questions.
+
+Each server can have up to **25 independent named surveys**. Names must contain
+1-24 lowercase letters, numbers, or hyphens, such as `feedback` or `balance-test`.
+All `/survey` commands and dashboard actions require Manage Server permission;
+members answer through published buttons. Each answer accepts up to 1,000
+characters. Optional questions can be skipped, but at least one answer is needed.
+
+Both forms support up to three optional screenshots or other files, totaling
+8 MiB. Files are re-uploaded into the staff review message, rather than stored as
+temporary upload links. Submissions identify the sender to staff, but the
+confirmation and report ID are visible only to the sender. These are **not
+anonymous** surveys. Do not submit passwords or other sensitive information.
+
+Settings use the existing guild configuration store; reports and attachments live
+in Discord review messages and follow that channel's retention/deletion policy.
+Use PostgreSQL in production so settings survive restarts. Buttons are registered
+handlers, not temporary collectors, and continue working after restarts.
+Re-running bug setup or publishing a survey posts a new button. Buttons in a
+previous panel channel become inactive if its configured channel changes.
+Disabling a flow stops both new and in-progress submissions without deleting
+existing reports. Survey definitions and bug settings are independent.
+
+### Leveling retired
+
+The message-leveling system and `/level`, `/rank`, `/leaderboard`, `/leveladd`,
+`/levelremove`, and `/levelset` commands have been removed. Arceus no longer awards
+message XP, announces level-ups, or synchronizes level-reward roles on startup.
+Previously stored leveling settings/XP and roles already earned are preserved;
+leaving the server no longer deletes historical leveling records. Storage
+compatibility and explicit `/wipedata` deletion remain available. No database
+migration or data purge is required. Economy features are unchanged.
+
+Removing those six commands and adding `/survey` and `/bugreport` leaves **96
+top-level commands**, below Discord's 100-command limit. Restart/deploy Arceus to
+replace its registered slash commands; removed commands may briefly remain in
+Discord's cached command picker.
+
 ## Features Overview
 
 TitanBot offers a complete suite of tools for Discord server management and community engagement:
@@ -166,7 +259,7 @@ Before enabling:
 When enabled, join welcome/auto-role/auto-verification is replaced for human new
 members. Legacy verify buttons and `/verify` direct them to screening. Access and
 reviewer roles are reserved against grants through reaction panels, the legacy
-application flow, shop, birthdays and leveling. Optional self-role assignment
+application flow, shop and birthdays. Optional self-role assignment
 requires approval. These checks do not override deliberate Discord staff actions.
 
 Progress and decisions use persistent PostgreSQL storage, versioned rules
@@ -229,11 +322,6 @@ roles, the welcome link and an actual PokeGalaxy command in restricted gameplay.
 
 </td>
 <td width="50%" valign="top">
-
-### Leveling & XP System
-- **XP Tracking** - Automatic message-based XP
-- **Level Roles** - Auto-assign roles by level
-- **Custom Configuration** - Personalize leveling
 
 ### Giveaways & Events
 - **Multiple Winners** - Support multi-winner giveaways
@@ -391,7 +479,7 @@ Slash commands are registered **globally** on startup (via `CLIENT_ID`), so the 
 
 Notes:
 - Global slash commands may take up to about an hour to propagate on first deploy
-- Each server has **isolated** data: config, economy, tickets, leveling, dashboards, warnings, etc. (all keys are scoped as `guild:{guildId}:...`)
+- Each server has **isolated** data: config, economy, tickets, surveys, dashboards, warnings, etc. (all keys are scoped as `guild:{guildId}:...`)
 - In the [Discord Developer Portal](https://discord.com/developers/applications), ensure your bot is not restricted to a single guild if you plan to invite it elsewhere
 - Generate an OAuth2 invite URL from the [Discord Developer Portal](https://discord.com/developers/applications) (OAuth2 → URL Generator, scopes: `bot` and `applications.commands`)
 
