@@ -25,6 +25,44 @@ Validate with `node --test scripts/message-commands.test.js scripts/onboarding.t
 - [Contributing](CONTRIBUTING.md)
 
 <a name="features-overview"></a>
+## Bug Reports and Feedback Surveys
+
+Administrators with **Manage Server** can publish guided submission buttons:
+
+```text
+/app-admin submissions setup type:Bug reports panel-channel:#bug-reports review-channel:#staff-bugs
+/app-admin submissions setup type:Feedback survey panel-channel:#feedback review-channel:#staff-feedback
+```
+
+Create these channels first. The review channel must explicitly deny **View
+Channel** to `@everyone`; allow only the intended staff roles and Arceus. Arceus
+needs View Channel, Send Messages and Embed Links in both channels, plus Attach
+Files in the review channel. Member-facing and review channels must be different.
+Review-channel privacy and bot permissions are checked again on every submission.
+
+The bug form asks what went wrong, reproduction steps, expected versus actual
+results, and optional platform/time details. The feedback survey asks for an
+overall first impression (an optional 1-5 rating), what members enjoyed, feature
+requests, changes or balance suggestions, and other comments. Only the overall
+impression is required for feedback, so members can submit a short response.
+Each text answer accepts up to 1,000 characters.
+
+Both forms support up to three optional screenshots or other files, totaling
+8 MiB. Files are re-uploaded into the staff review message, rather than stored as
+temporary upload links. Submissions identify the sender to staff, but the
+confirmation and report ID are visible only to the sender. These are **not
+anonymous** surveys. Do not submit passwords or other sensitive information.
+
+Settings use the existing guild configuration store; reports and attachments live
+in Discord review messages and follow that channel's retention/deletion policy.
+Use PostgreSQL in production so settings survive restarts. Buttons are registered
+handlers, not temporary collectors, and continue working after restarts.
+Running setup again changes the destination and posts a new button; buttons in a
+previous panel channel become inactive if the panel channel changes.
+Use `/app-admin submissions disable type:Bug reports` or
+`/app-admin submissions disable type:Feedback survey` to stop accepting submissions without
+deleting existing reports.
+
 ## Features Overview
 
 TitanBot offers a complete suite of tools for Discord server management and community engagement:

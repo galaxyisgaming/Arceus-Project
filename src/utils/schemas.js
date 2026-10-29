@@ -57,6 +57,11 @@ const VerificationConfigSchema = z
   })
   .optional();
 
+const SubmissionChannelsSchema = z.object({
+  panelChannelId: z.string().regex(/^\d{17,20}$/),
+  reviewChannelId: z.string().regex(/^\d{17,20}$/),
+}).nullable().optional();
+
 export const GuildConfigSchema = z
   .object({
     prefix: z.string().optional(),
@@ -76,7 +81,11 @@ export const GuildConfigSchema = z
     logging: LoggingConfigSchema.optional(),
     ticketLogging: TicketLoggingSchema.optional(),
     enableLogging: z.boolean().optional(),
-    verification: VerificationConfigSchema
+    verification: VerificationConfigSchema,
+    submissions: z.object({
+      bug: SubmissionChannelsSchema,
+      feedback: SubmissionChannelsSchema,
+    }).optional(),
   })
   .passthrough();
 
