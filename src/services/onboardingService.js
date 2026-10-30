@@ -23,10 +23,6 @@ const defaults = {
     welcomeMessageId: '1564660152706011252',
     verifiedRoleId: '1564658925591204012',
     reviewerRoleIds: ['1564658925591204017', '1564658925591204016', '1564658925591204015'],
-    gameplayCategoryId: '1564732192129679480',
-    gameplayChannelId: '1564736135899517099',
-    gameplayRoleId: '1564736300269965432',
-    gameBotUserId: '1562105059238744185',
 };
 const emptyDefaults = {
     enabled: false, minAccountAgeDays: 7, rulesVersion: RULES_VERSION, reviewerRoleIds: [],
@@ -108,28 +104,22 @@ function canView(channel, subject) {
 export async function validateOnboardingSetup(client, guild, config) {
     requirePersistence(client);
     const channels = {};
-    for (const name of ['application', 'rules', 'roles', 'review', 'welcome', 'gameplay']) {
+    for (const name of ['application', 'rules', 'roles', 'review', 'welcome']) {
         const id = config[`${name}ChannelId`];
         if (!id) throw new Error(`Configure the ${name} channel before enabling onboarding.`);
         const channel = await guild.channels.fetch(id);
         if (!channel || channel.type !== ChannelType.GuildText) throw new Error(`${name} must be a server text channel.`);
         channels[name] = channel;
     }
-    if (new Set(Object.values(channels).map(channel => channel.id)).size !== 6) {
-        throw new Error('Rules, onboarding, optional roles, review, welcome and restricted gameplay must use separate channels.');
-    }
-    if (channels.gameplay.parentId !== config.gameplayCategoryId) {
-        throw new Error('The restricted gameplay channel must be inside the configured gameplay category.');
+    if (new Set(Object.values(channels).map(channel => channel.id)).size !== 5) {
+        throw new Error('Rules, onboarding, optional roles, review and welcome must use separate channels.');
     }
     const verified = await assignableRole(guild, config.verifiedRoleId);
-    const gameplay = await assignableRole(guild, config.gameplayRoleId);
-    if (verified.id === gameplay.id || config.reviewerRoleIds.includes(verified.id) ||
-        config.reviewerRoleIds.includes(gameplay.id)) throw new Error('Access roles and reviewer roles must be distinct.');
+    if (config.reviewerRoleIds.includes(verified.id)) throw new Error('The verified role and reviewer roles must be distinct.');
     if (!config.reviewerRoleIds.length) throw new Error('Configure at least one reviewer role.');
     for (const id of config.reviewerRoleIds) {
         if (id === guild.id || !await guild.roles.fetch(id)) throw new Error(`Invalid reviewer role: ${id}`);
         if (!canView(channels.review, id)) throw new Error(`Reviewer role ${id} cannot see the review queue.`);
-        if (!canView(channels.gameplay, id)) throw new Error(`Reviewer role ${id} cannot see restricted gameplay.`);
     }
     const me = await guild.members.fetchMe({ force: true });
     for (const [name, channel] of Object.entries(channels)) {
@@ -141,24 +131,12 @@ export async function validateOnboardingSetup(client, guild, config) {
     for (const name of ['rules', 'application']) {
         if (!canView(channels[name], guild.id)) throw new Error(`Newcomers (@everyone) must be able to see the ${name} channel.`);
     }
-    for (const name of ['roles', 'welcome', 'gameplay', 'review']) {
+    for (const name of ['roles', 'welcome', 'review']) {
         if (canView(channels[name], guild.id)) throw new Error(`Remove @everyone access from the ${name} channel before enabling.`);
     }
-    if (canView(channels.review, verified) || canView(channels.review, gameplay)) {
+    if (canView(channels.review, verified)) {
         throw new Error('Member access roles must not expose the private review queue.');
     }
-    if (!canView(channels.gameplay, gameplay) || canView(channels.gameplay, verified)) {
-        throw new Error('Restricted gameplay must be visible to its dedicated access role, not the general verified role.');
-    }
-    if (!channels.gameplay.permissionsFor(gameplay)?.has([
-        PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory,
-    ])) throw new Error('The gameplay access role must be able to view, send and read message history in restricted gameplay.');
-    if (!config.gameBotUserId) throw new Error('Configure the PokeGalaxy bot user before enabling onboarding.');
-    const gameBot = await guild.members.fetch({ user: config.gameBotUserId, force: true });
-    if (!gameBot.user.bot || !channels.gameplay.permissionsFor(gameBot)?.has([
-        PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory,
-        PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AttachFiles,
-    ])) throw new Error('PokeGalaxy must be able to view, send, read history, embed and attach files in restricted gameplay.');
     for (const name of ['roles', 'welcome']) {
         if (!canView(channels[name], verified)) throw new Error(`Verified members must be able to view ${name}.`);
     }
@@ -242,13 +220,9 @@ async function approveRecord(client, guild, member, config, record, reviewerId) 
         throw new Error('Ask the applicant to correct their adult/minor category before approval.');
     }
     await assignableRole(guild, config.verifiedRoleId);
-    if (record.answers.ageGroup === MINOR) await assignableRole(guild, config.gameplayRoleId);
     const approving = { ...record, status: 'approving', reviewedBy: reviewerId, decisionAt: record.decisionAt || Date.now() };
     await saveMember(client, guild.id, member.id, approving);
-    // The verified role is granted last. Retryable state is persisted before any Discord change.
-    if (record.answers.ageGroup === MINOR && !member.roles.cache.has(config.gameplayRoleId)) {
-        await member.roles.add(config.gameplayRoleId, 'Onboarding gameplay access');
-    }
+    // Retryable state is persisted before any Discord change.
     if (!member.roles.cache.has(config.verifiedRoleId)) await member.roles.add(config.verifiedRoleId, 'Onboarding approved');
     const approved = await saveMember(client, guild.id, member.id, {
         ...approving, status: 'approved', approvedAt: Date.now(),
@@ -332,7 +306,7 @@ export async function reviewOnboarding(client, reviewer, userId, recordId, actio
 
 export async function assertOnboardingRoleAllowed(client, guildId, roleId) {
     const config = await getOnboardingConfig(client, guildId);
-    if (config.enabled && [config.verifiedRoleId, config.gameplayRoleId, ...config.reviewerRoleIds].includes(roleId)) {
+    if (config.enabled && [config.verifiedRoleId, ...config.reviewerRoleIds].includes(roleId)) {
         throw new Error('This role is reserved for onboarding approval and cannot be granted by another feature.');
     }
 }

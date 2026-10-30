@@ -207,12 +207,12 @@ All shared public channels must remain appropriate for minors; content filtering
 and Discord age-restricted channels must be configured separately.
 
 For the PokeGalaxy server, the supplied channel/verified-role/reviewer-role IDs
-are built into disabled defaults. Restricted gameplay uses the supplied Bot Lounge
-channel `1564736135899517099` inside category `1564732192129679480` and access role
-`1564736300269965432`. Saved dashboard settings take precedence over defaults.
-Use a neutral role name rather than a public age label; Discord
-roles are not confidential. The dedicated role is granted before the verified
-role when an approved applicant reports under 18.
+are built into disabled defaults. Saved dashboard settings take precedence over
+defaults. All approved applicants receive only the verified role, regardless of
+age category. Onboarding does not configure or check game channels, categories,
+game bots or extra access roles. Obsolete saved settings are ignored; no database
+migration is needed. Existing Discord channels and previously granted roles are
+left unchanged.
 
 Administrator commands:
 
@@ -223,11 +223,8 @@ Administrator commands:
   questionnaire and account-age review. It grants no roles by itself, cannot
   override a submitted/declined application, and does not survive rejoining.
   Typing "Galaxy" or "Hannah" as inviter never creates preapproval.
-- `/onboarding configure`: save channel, access-role, game-bot, reviewer-role,
+- `/onboarding configure`: save channel, verified-role, reviewer-role,
   welcome-message or rules-version settings while disabled.
-  If the gameplay channel is missing from Discord's picker, use
-  `gameplay-channel-id:1564736135899517099`. Arceus fetches and validates the
-  server text channel before saving; the usual permission checks still apply.
 - `/onboarding check`: validate setup without enabling it.
 - `/onboarding rules`: publish/update Arceus's approved ten-rule message in the
   configured rules channel. It edits only its own saved message, not staff posts.
@@ -240,20 +237,16 @@ Before enabling:
 
 1. Let newcomers (`@everyone`) view rules and onboarding. Hide normal member areas
    until approval. Do not assign access-granting roles automatically on arrival.
-2. Hide review, optional roles, welcome and restricted gameplay from `@everyone`.
+2. Hide review, optional roles and welcome from `@everyone`.
    Only reviewer roles, administrators and Arceus should see the staff queue;
    member access roles must not expose it.
-3. Give the verified role access to optional roles and welcome, but not restricted
-   gameplay. Give the gameplay-access role View Channel, Send Messages and Read
-   Message History in restricted gameplay. Give the three reviewer roles access.
-4. Give Arceus Manage Roles, place its role above both access roles, and allow it
-   to view/read all six configured channels and send/embed in onboarding/review.
-5. Give PokeGalaxy View Channel, Send Messages, Read Message History, Embed Links
-   and Attach Files in restricted gameplay. The main bot is the default;
-   `game-bot` can select another PokeGalaxy test bot.
-6. Confirm the saved welcome message contains the intended summary embed. No
+3. Give the verified role access to optional roles and welcome, and give the
+   configured reviewer roles access to the private review queue.
+4. Give Arceus Manage Roles, place its role above the verified role, and allow it
+   to view/read all five configured channels and send/embed in onboarding/review.
+5. Confirm the saved welcome message contains the intended summary embed. No
    webhook credentials are needed and the message is not reposted per applicant.
-7. Audit **other** server roles/overwrites too: the checks validate the configured
+6. Audit **other** server roles/overwrites too: the checks validate the configured
    access paths, not every possible combined role a member might receive.
 
 When enabled, join welcome/auto-role/auto-verification is replaced for human new
@@ -296,8 +289,8 @@ In Discord Server Settings, enable Community if required, select the existing
 rules channel, then configure Rules Screening (the UI may group it under
 Safety Setup). Enable requiring members to accept the rules before talking.
 In native Onboarding/Server Guide, make rules and the application channel easy
-to find. Interest/notification questions must not grant Verified, Trainer,
-gameplay access or reviewer roles. Use an account with no staff/access roles
+to find. Interest/notification questions must not grant Verified or reviewer
+roles. Use an account with no staff/access roles
 to test: administrators and manually verified members are not representative.
 
 After checking the channel permissions above, run `/onboarding dashboard`,
@@ -318,7 +311,7 @@ node --test scripts/onboarding.test.js scripts/reaction-roles.test.js
 
 These are mocked Discord/database integration tests, not a live-server acceptance
 test. Before rollout, use a test member to exercise both approval routes, optional
-roles, the welcome link and an actual PokeGalaxy command in restricted gameplay.
+roles and the welcome link.
 
 </td>
 <td width="50%" valign="top">

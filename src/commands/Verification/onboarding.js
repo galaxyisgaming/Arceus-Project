@@ -10,7 +10,6 @@ const channelOptions = [
     ['roles', 'Optional roles channel'],
     ['review', 'Private staff-review queue'],
     ['welcome', 'Existing PokeGalaxy welcome channel'],
-    ['gameplay', 'Restricted shared gameplay channel'],
 ];
 
 export default {
@@ -27,12 +26,7 @@ export default {
                     .addChannelTypes(ChannelType.GuildText));
             }
             return sub
-                .addStringOption(option => option.setName('gameplay-channel-id').setDescription('Text channel ID when the gameplay channel picker cannot find it'))
                 .addRoleOption(option => option.setName('verified-role').setDescription('Role granted after approval'))
-                .addRoleOption(option => option.setName('gameplay-role').setDescription('Neutral access role for the restricted gameplay channel'))
-                .addUserOption(option => option.setName('game-bot').setDescription('PokeGalaxy bot that must be able to use restricted gameplay'))
-                .addChannelOption(option => option.setName('gameplay-category').setDescription('Parent category for restricted gameplay')
-                    .addChannelTypes(ChannelType.GuildCategory))
                 .addStringOption(option => option.setName('welcome-message').setDescription('Existing welcome summary message ID'))
                 .addStringOption(option => option.setName('reviewer-roles').setDescription('Comma-separated reviewer role IDs'))
                 .addStringOption(option => option.setName('rules-version').setDescription('Version of the rules members must accept'));
@@ -71,36 +65,8 @@ export default {
                     const channel = interaction.options.getChannel(`${name}-channel`);
                     if (channel) config[`${name}ChannelId`] = channel.id;
                 }
-                const gameplayChannelId = interaction.options.getString('gameplay-channel-id')?.trim();
-                if (gameplayChannelId) {
-                    if (!/^\d{17,20}$/.test(gameplayChannelId)) throw new Error('Enter a valid gameplay text-channel ID.');
-                    const selected = interaction.options.getChannel('gameplay-channel');
-                    if (selected && selected.id !== gameplayChannelId) {
-                        throw new Error('Choose either gameplay-channel or its matching ID, not two different channels.');
-                    }
-                    let channel;
-                    try {
-                        channel = await guild.channels.fetch(gameplayChannelId, { force: true });
-                    } catch (error) {
-                        if (![10003, 50001, 50013].includes(error.code)) throw error;
-                        throw new Error('Arceus cannot access that channel. Check the ID, server and View Channel permission.');
-                    }
-                    if (!channel || channel.type !== ChannelType.GuildText) {
-                        throw new Error('The gameplay channel ID must identify a standard text channel in this server.');
-                    }
-                    config.gameplayChannelId = channel.id;
-                }
-                for (const name of ['verified', 'gameplay']) {
-                    const role = interaction.options.getRole(`${name}-role`);
-                    if (role) config[`${name}RoleId`] = role.id;
-                }
-                const category = interaction.options.getChannel('gameplay-category');
-                if (category) config.gameplayCategoryId = category.id;
-                const gameBot = interaction.options.getUser('game-bot');
-                if (gameBot) {
-                    if (!gameBot.bot) throw new Error('Select the PokeGalaxy bot, not a member account.');
-                    config.gameBotUserId = gameBot.id;
-                }
+                const verifiedRole = interaction.options.getRole('verified-role');
+                if (verifiedRole) config.verifiedRoleId = verifiedRole.id;
                 const messageId = interaction.options.getString('welcome-message');
                 if (messageId) {
                     if (!/^\d{17,20}$/.test(messageId)) throw new Error('Enter a valid welcome message ID.');
@@ -183,7 +149,6 @@ export default {
                         'Existing members retain their roles. Enabling replaces legacy one-click/automatic verification for new members.',
                     fields: [...fields,
                         { name: 'Verified role', value: config.verifiedRoleId ? `<@&${config.verifiedRoleId}>` : 'Not configured', inline: true },
-                        { name: 'Gameplay access role', value: config.gameplayRoleId ? `<@&${config.gameplayRoleId}>` : 'Not configured', inline: true },
                         { name: 'Reviewer roles', value: config.reviewerRoleIds.map(id => `<@&${id}>`).join(', ') || 'Not configured' },
                         { name: 'Next steps', value: 'Configure missing settings, check channel permissions, publish `/onboarding rules`, run `/onboarding check`, post `/onboarding panel`, then `/onboarding enable`.' },
                     ],

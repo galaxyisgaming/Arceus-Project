@@ -23,8 +23,6 @@ const DAY = 86400000;
 const guildId = '1564658925591204011';
 const userId = '1564658925591204080';
 const reviewerId = '1564658925591204081';
-const gameplayRoleId = '1564658925591204090';
-const gameplayChannelId = '1564658925591204091';
 const validAnswers = { invited: 'no', inviter: '', ageGroup: '18+', interest: 'both', conduct: 'yes' };
 
 async function fixture({ enabled = true, ageDays = 30 } = {}) {
@@ -48,10 +46,9 @@ async function fixture({ enabled = true, ageDays = 30 } = {}) {
     };
     const config = {
         ...await getOnboardingConfig(client, guildId), enabled,
-        gameplayRoleId, gameplayChannelId,
     };
     records.set(configKey, config);
-    const roleIds = [guildId, config.verifiedRoleId, gameplayRoleId, ...config.reviewerRoleIds];
+    const roleIds = [guildId, config.verifiedRoleId, ...config.reviewerRoleIds];
     const roles = new Collection(roleIds.map((id, index) => [id, {
         id, position: index, managed: false, permissions: new PermissionsBitField(),
     }]));
@@ -82,8 +79,6 @@ async function fixture({ enabled = true, ageDays = 30 } = {}) {
     }
     const applicant = member(userId);
     const reviewer = member(reviewerId, [config.reviewerRoleIds[0]]);
-    const gameBot = member(config.gameBotUserId);
-    gameBot.user.bot = true;
     guild.members.fetch = async options => {
         const id = typeof options === 'string' ? options : options.user;
         const result = members.get(id);
@@ -91,17 +86,14 @@ async function fixture({ enabled = true, ageDays = 30 } = {}) {
         return result;
     };
     const channels = {};
-    for (const name of ['application', 'rules', 'roles', 'review', 'welcome', 'gameplay']) {
+    for (const name of ['application', 'rules', 'roles', 'review', 'welcome']) {
         const visible = new Set([me.id]);
         if (['application', 'rules'].includes(name)) visible.add(guildId);
         if (['roles', 'welcome'].includes(name)) visible.add(config.verifiedRoleId);
-        if (['gameplay', 'review'].includes(name)) for (const id of config.reviewerRoleIds) visible.add(id);
-        if (name === 'gameplay') visible.add(gameplayRoleId);
-        if (name === 'gameplay') visible.add(gameBot.id);
+        if (name === 'review') for (const id of config.reviewerRoleIds) visible.add(id);
         const messages = new Collection();
         const channel = {
             id: config[`${name}ChannelId`], type: ChannelType.GuildText,
-            parentId: name === 'gameplay' ? config.gameplayCategoryId : null,
             visible,
             permissionsFor(subject) {
                 const id = typeof subject === 'string' ? subject : subject.id;
@@ -109,8 +101,6 @@ async function fixture({ enabled = true, ageDays = 30 } = {}) {
                 if (visible.has(id)) bits.add(PermissionFlagsBits.ViewChannel);
                 if (id === me.id) bits.add(PermissionFlagsBits.ReadMessageHistory,
                     PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks);
-                if (id === gameplayRoleId || id === gameBot.id) bits.add(PermissionFlagsBits.ReadMessageHistory,
-                    PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AttachFiles);
                 return bits;
             },
             messages: {
@@ -173,10 +163,12 @@ test('known server defaults are correct and disabled; other servers are not prec
     assert.equal(config.rulesChannelId, '1564689977307308162');
     assert.equal(config.reviewChannelId, '1564658929483386930');
     assert.equal(config.welcomeMessageId, '1564660152706011252');
-    assert.equal(config.gameplayChannelId, '1564736135899517099');
-    assert.equal(config.gameplayRoleId, '1564736300269965432');
-    await saveOnboardingConfig(f.client, guildId, { ...config, gameplayChannelId: '1564658925591204099' });
-    assert.equal((await getOnboardingConfig(f.client, guildId)).gameplayChannelId, '1564658925591204099');
+    assert.equal(config.gameplayChannelId, undefined);
+    assert.equal(config.gameplayRoleId, undefined);
+    assert.equal(config.gameplayCategoryId, undefined);
+    assert.equal(config.gameBotUserId, undefined);
+    await saveOnboardingConfig(f.client, guildId, { ...config, rulesVersion: 'updated' });
+    assert.equal((await getOnboardingConfig(f.client, guildId)).rulesVersion, 'updated');
     const other = await getOnboardingConfig(f.client, '1564658925591204099');
     assert.equal(other.enabled, false);
     assert.equal(other.verifiedRoleId, undefined);
@@ -225,17 +217,20 @@ test('adult approval grants only verified access and points to roles before the 
     assert.equal(JSON.stringify(final).includes('18+'), false);
 });
 
-test('minor approval grants the neutral gameplay-access role before verification', async () => {
+test('minor approval grants only verified access and uses the same welcome flow as adult approval', async () => {
     const f = await agreed();
     const approved = await submitScreening(f.client, f.applicant, { ...validAnswers, ageGroup: 'under 18' });
     assert.deepEqual(f.calls, [
-        ['add', userId, gameplayRoleId], ['add', userId, f.config.verifiedRoleId],
+        ['add', userId, f.config.verifiedRoleId],
     ]);
     assert.equal(approved.status, 'approved');
     const payload = onboardingStatusPayload(f.config, guildId, approved);
-    assert.match(payload.content, new RegExp(gameplayChannelId));
+    assert.deepEqual(payload, onboardingStatusPayload(f.config, guildId, { ...approved, answers: validAnswers }));
     assert.equal(payload.content.includes('minor'), false);
     assert.equal(payload.content.includes('under 18'), false);
+    const welcome = interaction(f);
+    await handleOnboardingButton(welcome, f.client, ['welcome']);
+    assert.equal(welcome.replies.at(-1)[1].content, 'Welcome to PokeGalaxy! Read the guide below.');
 });
 
 test('new accounts enter private review and duplicate submissions/restarts do not duplicate review cards', async () => {
@@ -359,26 +354,43 @@ test('failure saving final approval can retry without duplicating granted roles'
     assert.equal(f.calls.filter(call => call[0] === 'add').length, 1);
 });
 
-test('missing gameplay settings, public review/gameplay or unsafe role hierarchy prevent activation', async () => {
+test('missing channels, public review, overlapping roles or unsafe role hierarchy prevent activation', async () => {
     const f = await fixture();
     await validateOnboardingSetup(f.client, f.guild, f.config);
-    await assert.rejects(validateOnboardingSetup(f.client, f.guild, { ...f.config, gameplayChannelId: null }), /gameplay channel/);
-    await assert.rejects(validateOnboardingSetup(f.client, f.guild, { ...f.config, gameplayRoleId: null }), /not configured/);
+    await assert.rejects(validateOnboardingSetup(f.client, f.guild, { ...f.config, applicationChannelId: null }), /application channel/);
+    await assert.rejects(validateOnboardingSetup(f.client, f.guild, { ...f.config, verifiedRoleId: null }), /not configured/);
+    await assert.rejects(validateOnboardingSetup(f.client, f.guild, { ...f.config, rolesChannelId: f.config.welcomeChannelId }), /separate channels/);
+    await assert.rejects(validateOnboardingSetup(f.client, f.guild, {
+        ...f.config, reviewerRoleIds: [f.config.verifiedRoleId],
+    }), /must be distinct/);
     f.channels.review.visible.add(guildId);
     await assert.rejects(validateOnboardingSetup(f.client, f.guild, f.config), /Remove @everyone/);
     f.channels.review.visible.delete(guildId);
-    f.channels.gameplay.visible.add(f.config.verifiedRoleId);
-    await assert.rejects(validateOnboardingSetup(f.client, f.guild, f.config), /not the general verified role/);
-    f.channels.gameplay.visible.delete(f.config.verifiedRoleId);
+    f.channels.review.visible.add(f.config.verifiedRoleId);
+    await assert.rejects(validateOnboardingSetup(f.client, f.guild, f.config), /private review queue/);
+    f.channels.review.visible.delete(f.config.verifiedRoleId);
     f.roles.get(f.config.verifiedRoleId).position = 100;
     await assert.rejects(validateOnboardingSetup(f.client, f.guild, f.config), /protected/);
 });
 
-test('PokeGalaxy must have access to restricted gameplay before approval is enabled', async () => {
-    const f = await fixture();
-    f.channels.gameplay.visible.delete(f.config.gameBotUserId);
-    await assert.rejects(validateOnboardingSetup(f.client, f.guild, f.config), /PokeGalaxy must be able/);
-    assert.equal(f.calls.length, 0);
+test('obsolete saved gameplay settings do not block screening or grant extra roles', async () => {
+    for (const ageGroup of ['18+', 'under 18']) {
+        const f = await fixture();
+        Object.assign(f.records.get(f.configKey), {
+            gameplayRoleId: '1564736300269965432',
+            gameplayChannelId: 'deleted-channel',
+            gameplayCategoryId: 'deleted-category',
+            gameBotUserId: 'absent-bot',
+        });
+        const channels = await validateOnboardingSetup(f.client, f.guild, await getOnboardingConfig(f.client, guildId));
+        assert.equal(Object.keys(channels).length, 5);
+        await agreeToRules(f.client, f.applicant);
+        const approved = await submitScreening(f.client, f.applicant, { ...validAnswers, ageGroup });
+        assert.equal(approved.status, 'approved');
+        assert.deepEqual(f.calls, [['add', userId, f.config.verifiedRoleId]]);
+        await assertOnboardingRoleAllowed(f.client, guildId, '1564736300269965432');
+        assert(!JSON.stringify(onboardingStatusPayload(f.config, guildId, approved)).includes('gameplay'));
+    }
 });
 
 test('existing members retain access; new joins cannot reuse an old application', async () => {
@@ -409,7 +421,7 @@ test('legacy verification and automatic join verification cannot bypass enabled 
     const auto = await autoVerifyOnJoin(f.client, f.guild, f.applicant, { autoVerify: { enabled: true } });
     assert.equal(auto.reason, 'onboarding_required');
     assert.equal(f.applicant.owned.size, 0);
-    for (const role of [f.config.verifiedRoleId, gameplayRoleId, ...f.config.reviewerRoleIds]) {
+    for (const role of [f.config.verifiedRoleId, ...f.config.reviewerRoleIds]) {
         await assert.rejects(assertOnboardingRoleAllowed(f.client, guildId, role), /reserved/);
     }
     await assertOnboardingRoleAllowed(f.client, guildId, 'ordinary-role');
@@ -462,6 +474,10 @@ test('new commands validate their registration payload and disabled configuratio
     const command = onboardingCommand.data.toJSON();
     assert.equal(command.name, 'onboarding');
     assert.deepEqual(command.options.map(option => option.name), ['dashboard', 'preapprove', 'configure', 'check', 'rules', 'panel', 'enable', 'disable']);
+    assert.deepEqual(command.options.find(option => option.name === 'configure').options.map(option => option.name), [
+        'application-channel', 'rules-channel', 'roles-channel', 'review-channel', 'welcome-channel',
+        'verified-role', 'welcome-message', 'reviewer-roles', 'rules-version',
+    ]);
     const f = await fixture({ enabled: false });
     await saveOnboardingConfig(f.client, guildId, f.config);
     assert.equal(f.records.get(f.configKey).enabled, false);
@@ -509,7 +525,7 @@ test('only the server owner can preapprove; no roles until rules and category ar
         assert.equal(f.records.get(f.memberKey).status, 'approved');
         assert.equal(f.records.get(f.memberKey).reviewedBy, owner.id);
         assert(f.applicant.owned.has(f.config.verifiedRoleId));
-        assert.equal(f.applicant.owned.has(f.config.gameplayRoleId), ageGroup === 'under 18');
+        assert.deepEqual([...f.applicant.owned], [f.config.verifiedRoleId]);
     }
 });
 
@@ -606,57 +622,51 @@ test('rules slash command publishes once, edits its owned message, and refuses f
 
 test('actual slash enable refuses incomplete setup without mutating member access', async () => {
     const f = await fixture({ enabled: false });
-    f.records.get(f.configKey).gameplayChannelId = null;
+    f.records.get(f.configKey).applicationChannelId = null;
     const enable = interaction(f, {
         memberPermissions: new PermissionsBitField(PermissionFlagsBits.Administrator),
         options: { getSubcommand: () => 'enable' },
     });
     await onboardingCommand.execute(enable);
-    assert.match(enable.replies.at(-1)[1].content, /Configure the gameplay channel/);
+    assert.match(enable.replies.at(-1)[1].content, /Configure the application channel/);
     assert.equal(f.records.get(f.configKey).enabled, false);
     assert.equal(f.calls.length, 0);
 });
 
-function configureInteraction(f, id, selected = null) {
+function configureInteraction(f, verifiedRole = f.roles.get(f.config.verifiedRoleId)) {
     return interaction(f, {
         memberPermissions: new PermissionsBitField(PermissionFlagsBits.Administrator),
         options: {
             getSubcommand: () => 'configure',
-            getChannel: name => name === 'gameplay-channel' ? selected : null,
-            getString: name => name === 'gameplay-channel-id' ? id : null,
-            getRole: () => null,
-            getUser: () => null,
+            getChannel: name => name === 'roles-channel' ? f.channels.roles : null,
+            getString: () => null,
+            getRole: name => name === 'verified-role' ? verifiedRole : null,
         },
     });
 }
 
-test('direct gameplay channel ID repairs saved selection without the Discord channel picker', async () => {
+test('configuration and dashboard retain the remaining onboarding settings without gameplay options', async () => {
     const f = await fixture({ enabled: false });
-    f.records.get(f.configKey).gameplayChannelId = f.config.rolesChannelId;
-    const configure = configureInteraction(f, ` ${gameplayChannelId} `);
+    const verifiedRole = f.roles.get(f.config.verifiedRoleId);
+    f.records.get(f.configKey).rolesChannelId = null;
+    f.records.get(f.configKey).verifiedRoleId = null;
+    const configure = configureInteraction(f, verifiedRole);
     await onboardingCommand.execute(configure);
-    assert.equal(f.records.get(f.configKey).gameplayChannelId, gameplayChannelId);
+    assert.equal(f.records.get(f.configKey).rolesChannelId, f.channels.roles.id);
     assert.equal(f.records.get(f.configKey).enabled, false);
-    assert.equal(f.records.get(f.configKey).gameplayRoleId, gameplayRoleId);
+    assert.equal(f.records.get(f.configKey).verifiedRoleId, verifiedRole.id);
     assert.equal(f.calls.length, 0);
     assert.ok(configure.replies.at(-1)[1].embeds);
+    assert(!JSON.stringify(configure.replies.at(-1)[1]).toLowerCase().includes('gameplay'));
 });
 
-test('direct channel configuration rejects invalid, inaccessible, non-text and conflicting channels without saving', async () => {
-    for (const kind of ['invalid', 'missing', 'voice', 'forbidden', 'conflicting']) {
-        const f = await fixture({ enabled: false });
-        const before = structuredClone(f.records.get(f.configKey));
-        if (kind === 'missing') f.guild.channels.fetch = async () => null;
-        if (kind === 'voice') f.channels.gameplay.type = ChannelType.GuildVoice;
-        if (kind === 'forbidden') f.guild.channels.fetch = async () => {
-            throw Object.assign(new Error('Missing access'), { code: 50001 });
-        };
-        const configure = configureInteraction(f, kind === 'invalid' ? 'not-an-id' : gameplayChannelId,
-            kind === 'conflicting' ? f.channels.roles : null);
-        await onboardingCommand.execute(configure);
-        assert.match(configure.replies.at(-1)[1].content, /Onboarding could not complete:/, kind);
-        assert.deepEqual(f.records.get(f.configKey), before, kind);
-    }
+test('configuration cannot change settings while onboarding is enabled', async () => {
+    const f = await fixture();
+    const before = structuredClone(f.records.get(f.configKey));
+    const configure = configureInteraction(f);
+    await onboardingCommand.execute(configure);
+    assert.match(configure.replies.at(-1)[1].content, /Disable onboarding before changing/);
+    assert.deepEqual(f.records.get(f.configKey), before);
 });
 
 test('real PostgreSQL adapter propagates strict onboarding read failures while preserving legacy default behavior', async () => {

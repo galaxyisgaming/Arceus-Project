@@ -3,7 +3,7 @@ import {
     ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown,
 } from 'discord.js';
 import {
-    ADULT, MINOR, beginOnboarding, agreeToRules, getOnboardingConfig, getOnboardingMember,
+    beginOnboarding, agreeToRules, getOnboardingConfig, getOnboardingMember,
     submitScreening, reviewOnboarding, isCurrentJoin, assertOnboardingMemberApproved,
     serializeOnboarding, saveReviewMessage,
 } from '../services/onboardingService.js';
@@ -84,9 +84,6 @@ export function onboardingStatusPayload(config, guildId, record) {
         payload.components = [
             row(link('Choose optional roles', guildId, config.rolesChannelId), button('welcome', 'Continue to PokeGalaxy')),
         ];
-        if (record?.answers?.ageGroup === MINOR) {
-            payload.content += ` Your gameplay space is <#${config.gameplayChannelId}>.`;
-        }
     } else if (status === 'declined') {
         payload.content = 'Your application was not approved. Your access remains restricted; contact staff to discuss your application. ' +
             'You have not been automatically kicked or banned.';
@@ -97,7 +94,7 @@ export function onboardingStatusPayload(config, guildId, record) {
         payload.components = [row(button('retry', 'Retry approval'))];
     } else if (status === 'questionnaire') {
         payload.content = record.preapprovedBy ?
-            'The owner preapproved this join. Your rules agreement is recorded; confirm only your age category for the correct channel access.' :
+            'The owner preapproved this join. Your rules agreement is recorded; confirm only your age category to continue.' :
             'Your rules agreement is recorded. Complete the private screening form to continue.';
         payload.components = [row(button('form', 'Complete screening form'))];
     } else {
@@ -237,9 +234,8 @@ export async function handleOnboardingButton(interaction, client, args) {
         const config = await getOnboardingConfig(client, interaction.guildId);
         if (action === 'welcome') {
             await assertOnboardingMemberApproved(client, member);
-            const record = await getOnboardingMember(client, interaction.guildId, member.id);
             await interaction.editReply({
-                content: `Welcome to PokeGalaxy! Read the guide below.${record?.answers?.ageGroup === MINOR ? ` Play in <#${config.gameplayChannelId}>.` : ''}`,
+                content: 'Welcome to PokeGalaxy! Read the guide below.',
                 components: [row(link('PokeGalaxy welcome guide', interaction.guildId, config.welcomeChannelId, config.welcomeMessageId))],
                 allowedMentions: { parse: [] },
             });
