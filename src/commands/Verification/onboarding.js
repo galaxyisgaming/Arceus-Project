@@ -53,8 +53,8 @@ export default {
                 await preapproveOnboarding(client, { id: interaction.user.id, guild }, member);
                 await interaction.editReply({
                     content: `Preapproved <@${member.id}> for this join only. No roles granted yet. ` +
-                        `Ask them to use Begin / Check status in <#${config.applicationChannelId}>, ` +
-                        'accept the rules and confirm their age category. The full questionnaire and account-age review are skipped.',
+                        `Ask them to click Start onboarding in <#${config.applicationChannelId}>, ` +
+                        'confirm their age category and accept the rules in the form. The full questionnaire and account-age review are skipped.',
                     allowedMentions: { parse: [] },
                 });
                 return;
@@ -144,7 +144,7 @@ export default {
                 embeds: [new EmbedBuilder({
                     title: 'PokeGalaxy onboarding dashboard',
                     description: `Status: **${config.enabled ? 'Enabled' : 'Disabled'}**\n` +
-                        'Rules agreement -> private screening -> approval/review -> optional roles -> PokeGalaxy welcome.\n\n' +
+                        'Start onboarding -> private screening with rules agreement -> approval/review -> optional roles -> PokeGalaxy welcome.\n\n' +
                         'No Discord permissions, channels, roles, webhooks or AutoMod rules are created/changed by these commands. ' +
                         'Existing members retain their roles. Enabling replaces legacy one-click/automatic verification for new members.',
                     fields: [...fields,

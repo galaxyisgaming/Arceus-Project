@@ -157,9 +157,26 @@ TitanBot offers a complete suite of tools for Discord server management and comm
 - **Multi-role Support** - Multiple role options
 
 Administrators create panels with `/reactroles setup` and manage them with
-`/reactroles dashboard`. Members click the numbered/letter emoji reaction beside
+`/reactroles dashboard`. Members click the configured emoji reaction beside
 a role to receive it, and remove their own reaction to remove that role. The
 dashboard itself remains slash-command based.
+
+Choose your own emojis with the optional `emoji1` through `emoji5` setup options,
+matching `role1` through `role5`. Roles without a selection use the default
+number/letter reactions. For an existing panel, including roles added through the
+dashboard, use:
+
+```text
+/reactroles emoji panel:<choose your panel> role:@Role emoji:🎮
+```
+
+Paste one Unicode emoji or a custom emoji from this server (`<:name:id>`,
+`<a:name:id>`, or its ID). Each role on the same panel must use a different emoji.
+Only administrators can change mappings. The existing message and role grants
+are preserved; old reactions for the changed emoji are cleared and the new
+reaction and legend are published. Members can use the new reaction to add/remove
+the role. Changing an emoji with existing member reactions requires Manage
+Messages. If synchronization fails after saving, retry `/reactroles dashboard`.
 
 Existing dropdown panels convert automatically on startup without removing any
 member's existing roles. Emoji mappings persist across restarts and dashboard
@@ -185,13 +202,20 @@ Onboarding is **disabled by default**. It does not create/change Discord channel
 permissions, roles, webhooks or AutoMod rules, and does not remove existing members'
 roles. Configure permissions deliberately before enabling it.
 
-When enabled, new human members receive a DM explaining how to find the
-**Begin / Check status** panel and private form. Discord does not allow bots to
-open a form automatically on join. Closed DMs are logged and do not prevent
-using the server panel; keep that channel visible to newcomers. No access is
-granted just for receiving a prompt.
+When enabled, new human members receive a DM linking to the existing onboarding
+panel (for example in **#start-here**). If DMs are closed, Arceus mentions only
+that member with instructions in the configured onboarding channel; answers and
+age categories are never posted there. Members receive another prompt when
+they finish Discord's native rules screening. Keep the onboarding channel visible
+to newcomers and allow Arceus to send messages there.
 
-The flow is rules agreement -> private five-field screening form -> automatic
+Read the rules on the panel, then click **Start onboarding** once to open the
+private questionnaire. Accepting the rules, appropriate chat and staff directions
+is the final yes/no answer in the form, not a separate button. Discord does not
+allow bots to open a form automatically on join. No access is granted just for
+receiving a prompt or opening the form.
+
+The flow is Start onboarding -> private five-field form with rules agreement -> automatic
 approval or private staff review -> optional roles -> a link to the **existing**
 PokeGalaxy welcome summary. The form asks invitation yes/no, optional inviter,
 18+/under-18 category, interest and conduct agreement. Discord account age is read
@@ -219,7 +243,7 @@ Administrator commands:
 - `/onboarding dashboard`: inspect settings.
 - `/onboarding preapprove member:@user`: server owner only; personally vet a
   current member for this join. They still finish Discord screening, accept the
-  current rules and submit a one-field age-category form, but skip the full
+  current rules and submit a two-field age-category/rules-agreement form, but skip the full
   questionnaire and account-age review. It grants no roles by itself, cannot
   override a submitted/declined application, and does not survive rejoining.
   Typing "Galaxy" or "Hannah" as inviter never creates preapproval.
@@ -264,9 +288,14 @@ records expire after 30 days and reviewed records after 14 days; granted roles
 remain. Discord staff-review messages are separate and must be retained/deleted
 according to the server's staff policy.
 
+The saved bot-owned panel is refreshed in place on startup with the Start
+onboarding button; old Begin / Check status buttons also open the new flow.
 Review cards are restored after restart, and member status is available through
-the onboarding panel even when DMs are closed. Native Discord membership screening
-must also be completed. Role selection is optional: the welcome button does not
+the onboarding panel even when DMs are closed. Clicking Start onboarding again
+shows submitted, approved or declined status rather than creating another form.
+Native Discord membership screening
+must also be completed before the form opens. Forms expire if the rules version
+changes or a member leaves and rejoins. Role selection is optional: the welcome button does not
 require choosing any notification role. No PokeGalaxy economy/game data is edited.
 
 #### Approved server rules and Discord setup

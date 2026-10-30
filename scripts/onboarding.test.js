@@ -14,6 +14,7 @@ import {
     SERVER_RULES, serverRulesPayload, notifyOnboardingStart,
 } from '../src/handlers/onboarding.js';
 import onboardingCommand from '../src/commands/Verification/onboarding.js';
+import memberUpdateEvent from '../src/events/guildMemberUpdate.js';
 import { verifyUser, autoVerifyOnJoin } from '../src/services/verificationService.js';
 import { logger } from '../src/utils/logger.js';
 import { PostgreSQLDatabase } from '../src/utils/postgresDatabase.js';
@@ -94,6 +95,7 @@ async function fixture({ enabled = true, ageDays = 30 } = {}) {
         const messages = new Collection();
         const channel = {
             id: config[`${name}ChannelId`], type: ChannelType.GuildText,
+            isTextBased: () => true,
             visible,
             permissionsFor(subject) {
                 const id = typeof subject === 'string' ? subject : subject.id;
@@ -439,6 +441,115 @@ test('form handler submits privately; panel never contains stored answers', asyn
     assert.equal(panel.components[0].components.length, 2);
 });
 
+async function openStartForm(f) {
+    const start = interaction(f);
+    await handleOnboardingButton(start, f.client, ['start']);
+    const [kind, modal] = start.replies.at(-1);
+    assert.equal(kind, 'modal', JSON.stringify(modal));
+    assert.equal(start.replies.length, 1, 'Start opens the form without an intermediate response');
+    return modal.custom_id.split(':').slice(1);
+}
+
+test('one Start click opens a five-field form and submission records rules agreement and auto-approves', async () => {
+    const f = await fixture();
+    const args = await openStartForm(f);
+    assert.equal(f.records.get(f.memberKey).agreedAt, undefined, 'Opening the form is not consent');
+    const form = interaction(f, { fields: { getTextInputValue: key => validAnswers[key] } });
+    await handleOnboardingForm(form, f.client, args);
+    const record = f.records.get(f.memberKey);
+    assert.equal(record.status, 'approved');
+    assert.equal(record.rulesVersion, f.config.rulesVersion);
+    assert.ok(record.agreedAt);
+    assert.deepEqual([...f.applicant.owned], [f.config.verifiedRoleId]);
+    assert.match(form.replies.at(-1)[1].content, /You are approved/);
+});
+
+test('new-account one-click submissions still enter staff review and cannot reopen or bypass it', async () => {
+    const f = await fixture({ ageDays: 1 });
+    const args = await openStartForm(f);
+    const form = interaction(f, { fields: { getTextInputValue: key => validAnswers[key] } });
+    await handleOnboardingForm(form, f.client, args);
+    assert.equal(f.records.get(f.memberKey).status, 'pending_review');
+    assert.equal(f.applicant.owned.size, 0);
+    const start = interaction(f);
+    await handleOnboardingButton(start, f.client, ['start']);
+    assert(!start.replies.some(([kind]) => kind === 'modal'));
+    assert.match(start.replies.at(-1)[1].content, /staff-review queue/);
+    assert.equal(f.calls.filter(call => call[0] === 'send' && call[1] === 'review').length, 1);
+});
+
+test('one-click forms reject refusal, stale rules, previous joins, disabled onboarding and native pending screening', async () => {
+    for (const kind of ['refusal', 'rules', 'rejoin', 'disabled', 'pending']) {
+        const f = await fixture();
+        const args = await openStartForm(f);
+        if (kind === 'rules') f.records.get(f.configKey).rulesVersion = 'new-version';
+        if (kind === 'rejoin') f.applicant.joinedTimestamp += 1000;
+        if (kind === 'disabled') f.records.get(f.configKey).enabled = false;
+        if (kind === 'pending') f.applicant.pending = true;
+        const form = interaction(f, { fields: { getTextInputValue: key =>
+            key === 'conduct' && kind === 'refusal' ? 'no' : validAnswers[key] } });
+        await handleOnboardingForm(form, f.client, args);
+        assert.match(form.replies.at(-1)[1].content, /Onboarding could not complete:/, kind);
+        assert.equal(f.records.get(f.memberKey).agreedAt, undefined, kind);
+        assert.equal(f.applicant.owned.size, 0, kind);
+    }
+    const f = await fixture();
+    f.applicant.pending = true;
+    const start = interaction(f);
+    await handleOnboardingButton(start, f.client, ['start']);
+    assert.match(start.replies.at(-1)[1].content, /Discord server rules screening/);
+    assert(!start.replies.some(([kind]) => kind === 'modal'));
+});
+
+test('rules version is checked inside the serialized submission and agreement survives only a successful save', async () => {
+    const f = await fixture();
+    await beginOnboarding(f.client, f.applicant);
+    await assert.rejects(submitScreening(f.client, f.applicant, validAnswers, { acceptedRulesVersion: 'outdated' }), /rules have changed/);
+    await assert.rejects(submitScreening(f.client, f.applicant, validAnswers,
+        { acceptedRulesVersion: f.config.rulesVersion, sessionId: 'stale-session' }), /session expired/);
+    f.client.db.set = async () => false;
+    await assert.rejects(submitScreening(f.client, f.applicant, validAnswers,
+        { acceptedRulesVersion: f.config.rulesVersion, sessionId: f.records.get(f.memberKey).id }), /could not be saved/);
+    assert.equal(f.records.get(f.memberKey).agreedAt, undefined);
+    assert.equal(f.applicant.owned.size, 0);
+});
+
+test('owner-preapproved members accept rules in their two-field one-click form', async () => {
+    const f = await fixture({ ageDays: 1 });
+    await preapproveOnboarding(f.client, { id: f.guild.ownerId, guild: f.guild }, f.applicant);
+    const args = await openStartForm(f);
+    const form = interaction(f, { fields: { getTextInputValue: key => {
+        assert(['ageGroup', 'conduct'].includes(key));
+        return validAnswers[key];
+    } } });
+    await handleOnboardingForm(form, f.client, args);
+    assert.equal(f.records.get(f.memberKey).status, 'approved');
+    assert.ok(f.records.get(f.memberKey).agreedAt);
+});
+
+test('finishing native Discord screening sends directions once and skips approved or bot members', async () => {
+    const f = await fixture();
+    await memberUpdateEvent.execute({ ...f.applicant, pending: true }, f.applicant);
+    assert.equal(f.calls.filter(call => call[0] === 'dm').length, 1);
+    assert.match(f.calls[0][2].content, /You can now complete/);
+    await memberUpdateEvent.execute(f.applicant, f.applicant);
+    assert.equal(f.calls.filter(call => call[0] === 'dm').length, 1);
+    await agreeToRules(f.client, f.applicant);
+    await submitScreening(f.client, f.applicant, validAnswers);
+    await memberUpdateEvent.execute({ ...f.applicant, pending: true }, f.applicant);
+    f.applicant.user.bot = true;
+    await memberUpdateEvent.execute({ ...f.applicant, pending: true }, f.applicant);
+    assert.equal(f.calls.filter(call => call[0] === 'dm').length, 1);
+});
+
+test('startup refreshes the owned onboarding panel with the one-click Start button', async () => {
+    const f = await fixture();
+    const panel = await f.channels.application.send(onboardingPanel(f.config, guildId));
+    f.records.get(f.configKey).panelMessageId = panel.id;
+    await reconcileOnboarding(f.client);
+    assert.equal(panel.payload.components[0].components[0].data.label, 'Start onboarding');
+});
+
 test('screening form renders within Discord component limits and reviewer buttons open a reason modal', async () => {
     const f = await agreed({ ageDays: 1 });
     const startForm = interaction(f);
@@ -515,7 +626,7 @@ test('only the server owner can preapprove; no roles until rules and category ar
         await agreeToRules(f.client, f.applicant);
         const open = interaction(f);
         await handleOnboardingButton(open, f.client, ['form']);
-        assert.equal(open.replies.at(-1)[1].components.length, 1, 'preapproved form asks only access category');
+        assert.equal(open.replies.at(-1)[1].components.length, 2, 'preapproved form asks category and rules agreement');
         await assert.rejects(submitScreening(f.client, f.applicant, { ageGroup: 'unknown' }), /Enter 18\+/);
         const form = interaction(f, { fields: { getTextInputValue: key => {
             assert.equal(key, 'ageGroup');
@@ -580,17 +691,22 @@ test('preapprove slash command rejects non-owner administrators and persists own
 
 test('join instructions link to the server panel without granting roles or exposing answers', async () => {
     const f = await fixture();
+    f.applicant.pending = true;
     await beginOnboarding(f.client, f.applicant, true);
     assert.equal(await notifyOnboardingStart(f.applicant, f.config), true);
     const payload = f.calls.find(call => call[0] === 'dm')[2];
     assert(payload.content.includes('Complete Discord server rules screening first'));
-    assert(payload.content.includes('Begin / Check status'));
+    assert(payload.content.includes('Start onboarding'));
     const links = payload.components[0].toJSON().components;
     assert(links[1].url.startsWith(`https://discord.com/channels/${guildId}/${f.config.applicationChannelId}`));
     assert.deepEqual(payload.allowedMentions, { parse: [] });
     assert(!f.calls.some(call => call[0] === 'add'));
     f.applicant.send = async () => { throw Object.assign(new Error('DM closed'), { code: 50007 }); };
     assert.equal(await notifyOnboardingStart(f.applicant, f.config), false);
+    const fallback = f.calls.find(call => call[0] === 'send' && call[1] === 'application')[2];
+    assert.match(fallback.content, new RegExp(`<@${userId}>`));
+    assert.deepEqual(fallback.allowedMentions, { parse: [], users: [userId] });
+    assert(!fallback.content.includes('under 18'));
     assert.equal(f.records.get(f.memberKey).status, 'awaiting_rules');
     const error = Object.assign(new Error('Unexpected Discord failure'), { code: 50013 });
     f.applicant.send = async () => { throw error; };

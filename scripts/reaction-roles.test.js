@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChannelType, Collection, EmbedBuilder, PermissionFlagsBits, PermissionsBitField } from 'discord.js';
 import { reactionMappings, reactionPanelEmbed, syncReactionPanel, migrateReactionPanels,
-    handleRoleReaction, REACTION_PANEL_FOOTER } from '../src/services/reactionRolePanels.js';
+    handleRoleReaction, REACTION_PANEL_FOOTER, normalizeReactionEmoji, setReactionRoleEmoji } from '../src/services/reactionRolePanels.js';
 import { reconcileReactionRoleMessages } from '../src/services/reactionRoleService.js';
 import { getReactionRolePanelStatus } from '../src/utils/panelStatus.js';
 import addEvent from '../src/events/messageReactionAdd.js';
@@ -362,6 +362,17 @@ test('rendering preserves exact emoji and instructional footer despite global em
     assert.match(custom.fields[0].value, /<:role:1564658925591204018>/);
 });
 
+test('twenty custom emoji roles fit Discord field limits and repeated rendering does not duplicate legends', () => {
+    const roles = Array.from({ length: 20 }, (_, i) => String(BigInt(roleId) + BigInt(i)));
+    const emojiRoles = Object.fromEntries(roles.map((id, i) => [String(1564658925591205000n + BigInt(i)), id]));
+    const panel = { roles, emojiRoles };
+    const embed = reactionPanelEmbed(new EmbedBuilder().setTitle('Custom emojis'), panel).toJSON();
+    assert.equal(embed.fields.length, 2);
+    assert(embed.fields.every(field => field.value.length <= 1024));
+    assert.equal(embed.fields.map(field => field.value).join('\n').split('\n').length, 20);
+    assert.deepEqual(reactionPanelEmbed(embed, panel).toJSON().fields, embed.fields);
+});
+
 test('slash setup posts a working reaction panel while retaining slash dashboard administration', async () => {
     const f = fixture();
     f.records.delete(key);
@@ -379,7 +390,7 @@ test('slash setup posts a working reaction panel while retaining slash dashboard
         options: {
             getSubcommand: () => 'setup',
             getChannel: () => f.channel,
-            getString: name => name === 'title' ? 'My role panel' : 'My role description',
+            getString: name => name === 'title' ? 'My role panel' : name === 'description' ? 'My role description' : null,
             getRole: name => name === 'role1' ? f.roles.get(roleId) : name === 'role2' ? f.roles.get(secondRoleId) : null,
         },
         async editReply(payload) { replies.push(payload); },
@@ -392,7 +403,7 @@ test('slash setup posts a working reaction panel while retaining slash dashboard
     assert.equal(replies.length, 1);
     const command = reactroles.data.toJSON();
     assert.equal(command.name, 'reactroles');
-    assert.deepEqual(command.options.map(option => option.name), ['setup', 'dashboard']);
+    assert.deepEqual(command.options.map(option => option.name), ['setup', 'dashboard', 'emoji']);
 });
 
 test('setup cleans up the posted message and its config if reaction seeding fails', async () => {
@@ -406,13 +417,108 @@ test('setup cleans up the posted message and its config if reaction seeding fail
         options: {
             getSubcommand: () => 'setup',
             getChannel: () => f.channel,
-            getString: () => 'Test panel',
+            getString: name => ['title', 'description'].includes(name) ? 'Test panel' : null,
             getRole: name => name === 'role1' ? f.roles.get(roleId) : null,
         },
     };
     await assert.rejects(reactroles.execute(interaction), /Reaction seeding failed/);
     assert.equal(f.records.has(key), false);
     assert.deepEqual(f.calls, [['delete', messageId]]);
+});
+
+test('emoji input accepts one Unicode grapheme or an available custom emoji from this server', async () => {
+    const f = fixture();
+    const id = '1564658925591204018';
+    f.guild.emojis = { async fetch(input) { return input === id ? { id, available: true } : null; } };
+    for (const emoji of ['🎮', '👍🏽', '👨‍👩‍👧‍👦', '🇬🇧', '1️⃣']) {
+        assert.equal(await normalizeReactionEmoji(f.guild, ` ${emoji} `), emoji);
+    }
+    assert.equal(await normalizeReactionEmoji(f.guild, '❤'), '❤️');
+    assert.equal(await normalizeReactionEmoji(f.guild, `<:trainer:${id}>`), id);
+    assert.equal(await normalizeReactionEmoji(f.guild, `<a:trainer:${id}>`), id);
+    assert.equal(await normalizeReactionEmoji(f.guild, id), id);
+    for (const invalid of ['', 'hello', 'a', '🎮🔥', ':trainer:', '<@123>', '1']) {
+        await assert.rejects(normalizeReactionEmoji(f.guild, invalid), /Enter one Unicode emoji/);
+    }
+    await assert.rejects(normalizeReactionEmoji(f.guild, '1564658925591204099'), /available custom emoji/);
+    f.guild.emojis.fetch = async () => ({ id, available: false });
+    await assert.rejects(normalizeReactionEmoji(f.guild, id), /available custom emoji/);
+});
+
+test('changing a reaction emoji clears old reactions without revoking roles and survives restart', async () => {
+    const f = await activeFixture();
+    f.owned.add(roleId);
+    const old = f.message.reactions.cache.get('1️⃣');
+    old.count = 2;
+    old.remove = async () => {
+        f.calls.push(['clear', '1️⃣']);
+        await handleRoleReaction(f.reaction, f.user, false);
+        f.message.reactions.cache.delete('1️⃣');
+    };
+    await setReactionRoleEmoji(f.client, f.guild, messageId, roleId, '🎮');
+    assert.deepEqual(f.records.get(key).emojiRoles, { '2️⃣': secondRoleId, '🎮': roleId });
+    assert.equal(f.message.reactions.cache.has('1️⃣'), false);
+    assert.equal(f.message.reactions.cache.has('🎮'), true);
+    assert.equal(f.owned.has(roleId), true);
+    assert(!f.calls.some(([kind]) => ['add', 'remove'].includes(kind)));
+    await migrateReactionPanels(f.client);
+    assert.equal(f.records.get(key).emojiRoles['🎮'], roleId);
+    await handleRoleReaction({ ...f.reaction, emoji: { name: '🎮' } }, f.user, false);
+    assert.equal(f.owned.has(roleId), false);
+    await handleRoleReaction({ ...f.reaction, emoji: { name: '🎮' } }, f.user, true);
+    assert.equal(f.owned.has(roleId), true);
+});
+
+test('emoji changes reject duplicate emojis, absent roles, missing permissions and failed writes before cleanup', async () => {
+    for (const kind of ['duplicate', 'absent-role', 'permissions', 'write']) {
+        const f = await activeFixture();
+        const old = structuredClone(f.records.get(key));
+        f.message.reactions.cache.get('1️⃣').count = 2;
+        if (kind === 'permissions') f.permissions.remove(PermissionFlagsBits.ManageMessages);
+        if (kind === 'write') f.client.db.set = async () => false;
+        await assert.rejects(setReactionRoleEmoji(f.client, f.guild, messageId,
+            kind === 'absent-role' ? 'absent' : roleId, kind === 'duplicate' ? '2️⃣' : '🎮'));
+        assert.deepEqual(f.records.get(key), old, kind);
+        assert.equal(f.calls.length, 0, kind);
+    }
+});
+
+test('administrator slash command changes existing panel emojis and rejects non-admins', async () => {
+    const f = await activeFixture();
+    const replies = [];
+    const interaction = {
+        id: 'emoji-interaction', client: f.client, guildId, guild: f.guild, user: f.user,
+        memberPermissions: new PermissionsBitField(PermissionFlagsBits.Administrator),
+        deferred: true,
+        options: {
+            getSubcommand: () => 'emoji',
+            getString: name => name === 'panel' ? messageId : '🎮',
+            getRole: () => f.roles.get(roleId),
+        },
+        async editReply(payload) { replies.push(payload); },
+    };
+    await reactroles.execute(interaction);
+    assert.match(replies[0].content, /emoji updated/);
+    assert.equal(f.records.get(key).emojiRoles['🎮'], roleId);
+    interaction.memberPermissions = new PermissionsBitField();
+    await assert.rejects(reactroles.execute(interaction), /Only server administrators/);
+});
+
+test('setup accepts selected emojis and assigns defaults only to roles without a selection', async () => {
+    const f = fixture();
+    f.records.delete(key);
+    f.channel.send = async () => f.message;
+    const interaction = {
+        id: 'emoji-setup', client: f.client, guildId, guild: f.guild, user: f.user, deferred: true,
+        options: {
+            getSubcommand: () => 'setup', getChannel: () => f.channel,
+            getString: name => name === 'emoji1' ? '🎮' : ['title', 'description'].includes(name) ? 'Roles' : null,
+            getRole: name => name === 'role1' ? f.roles.get(roleId) : name === 'role2' ? f.roles.get(secondRoleId) : null,
+        },
+        async editReply() {},
+    };
+    await reactroles.execute(interaction);
+    assert.deepEqual(f.records.get(key).emojiRoles, { '🎮': roleId, '1️⃣': secondRoleId });
 });
 
 test('stale dropdown interactions direct members to reactions without changing any roles', async () => {

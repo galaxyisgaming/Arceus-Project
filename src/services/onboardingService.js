@@ -231,12 +231,26 @@ async function approveRecord(client, guild, member, config, record, reviewerId) 
     return approved;
 }
 
-export async function submitScreening(client, member, answers) {
+export async function submitScreening(client, member, answers, { acceptedRulesVersion, sessionId } = {}) {
     return serializeOnboarding(member.guild.id, member.id, async () => {
         const config = await getOnboardingConfig(client, member.guild.id);
         assertScreeningAccess(config, member);
         await validateOnboardingSetup(client, member.guild, config);
-        const record = await getOnboardingMember(client, member.guild.id, member.id);
+        let record = await getOnboardingMember(client, member.guild.id, member.id);
+        if (acceptedRulesVersion !== undefined) {
+            if (acceptedRulesVersion !== config.rulesVersion) {
+                throw new Error('The rules have changed. Read the current rules and reopen Start onboarding.');
+            }
+            if (!isCurrentJoin(record, member) || record.id !== sessionId) {
+                throw new Error('This onboarding session expired. Start again.');
+            }
+            if (['awaiting_rules', 'questionnaire'].includes(record.status)) {
+                if (String(answers.conduct || '').trim().toLowerCase() !== 'yes') {
+                    throw new Error('Accept the server rules and conduct agreement to continue.');
+                }
+                record = { ...record, status: 'questionnaire', rulesVersion: config.rulesVersion, agreedAt: Date.now() };
+            }
+        }
         if (!isCurrentJoin(record, member) || !record.agreedAt || record.rulesVersion !== config.rulesVersion) {
             throw new Error('Read and agree to the current rules before submitting screening.');
         }
