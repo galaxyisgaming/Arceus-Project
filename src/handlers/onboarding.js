@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
 import {
     ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags,
     ModalBuilder, TextInputBuilder, TextInputStyle, escapeMarkdown,
 } from 'discord.js';
 import {
-    ADULT, MINOR, beginOnboarding, agreeToRules, getOnboardingConfig, getOnboardingMember,
+    beginOnboarding, agreeToRules, getOnboardingConfig, getOnboardingMember,
     submitScreening, reviewOnboarding, isCurrentJoin, assertOnboardingMemberApproved,
     serializeOnboarding, saveReviewMessage,
 } from '../services/onboardingService.js';
@@ -40,20 +41,30 @@ export function serverRulesPayload(config) {
 }
 
 export async function notifyOnboardingStart(member, config) {
+    const instructions = {
+        content: (member.pending
+            ? 'Welcome to PokeGalaxy! Complete Discord server rules screening first, then open the onboarding channel below.\n'
+            : 'Welcome to PokeGalaxy! You can now complete your server onboarding.\n') +
+            'Read the rules, then click **Start onboarding** on the server panel to open the private form. ' +
+            'Enter yes in the form to accept the rules. Submit it to receive automatic approval if eligible; ' +
+            'otherwise staff will review your application. No need to wait for staff unless your status says review is needed.',
+        components: [row(link('Read the rules', member.guild.id, config.rulesChannelId),
+            link('Open onboarding', member.guild.id, config.applicationChannelId, config.panelMessageId))],
+        allowedMentions: { parse: [] },
+    };
     try {
-        await member.send({
-            content: 'Welcome to PokeGalaxy! Complete Discord server rules screening first, then open the onboarding channel below.\n' +
-                'Click **Begin / Check status**, agree to the rules, and open the private screening form. ' +
-                'Eligible completed applications are approved automatically; others go to staff review. ' +
-                'If this message is unavailable later, the same panel remains in the server.',
-            components: [row(link('Read the rules', member.guild.id, config.rulesChannelId),
-                link('Open onboarding', member.guild.id, config.applicationChannelId, config.panelMessageId))],
-            allowedMentions: { parse: [] },
-        });
+        await member.send(instructions);
         return true;
     } catch (error) {
         if (error.code !== 50007) throw error;
-        logger.warn(`Cannot DM onboarding instructions to ${member.id} in ${member.guild.id}; use the server onboarding panel.`);
+        logger.warn(`Cannot DM onboarding instructions to ${member.id} in ${member.guild.id}; posting directions in the onboarding channel.`);
+        const channel = await member.guild.channels.fetch(config.applicationChannelId);
+        if (!channel || !channel.isTextBased?.()) throw new Error('Cannot display onboarding instructions: the application channel is unavailable.');
+        await channel.send({
+            ...instructions,
+            content: `<@${member.id}> ${instructions.content}`,
+            allowedMentions: { parse: [], users: [member.id] },
+        });
         return false;
     }
 }
@@ -62,7 +73,8 @@ export function onboardingPanel(config, guildId) {
     return {
         embeds: [new EmbedBuilder({
             title: 'Welcome to PokeGalaxy',
-            description: 'Read the server rules, agree to them, then complete a short private screening form.\n\n' +
+            description: 'Read the server rules below, then click **Start onboarding** to open the private form. ' +
+                'Enter yes in the form to accept the server rules, appropriate chat and staff directions.\n\n' +
                 'Accounts at least 7 days old with complete answers and accepted agreements can be approved automatically. ' +
                 'Newer accounts or answers needing clarification go to authorized staff. ' +
                 'After approval, choose optional roles and visit the PokeGalaxy welcome guide.\n\n' +
@@ -70,7 +82,7 @@ export function onboardingPanel(config, guildId) {
                 'Your answers are private to authorized staff. Do not enter other personal information.',
             color: 0x9b59b6,
         }), ...serverRulesPayload(config).embeds],
-        components: [row(link('Read the rules', guildId, config.rulesChannelId), button('start', 'Begin / Check status'))],
+        components: [row(button('start', 'Start onboarding'), link('Read the rules', guildId, config.rulesChannelId))],
         allowedMentions: { parse: [] },
     };
 }
@@ -84,9 +96,6 @@ export function onboardingStatusPayload(config, guildId, record) {
         payload.components = [
             row(link('Choose optional roles', guildId, config.rolesChannelId), button('welcome', 'Continue to PokeGalaxy')),
         ];
-        if (record?.answers?.ageGroup === MINOR) {
-            payload.content += ` Your gameplay space is <#${config.gameplayChannelId}>.`;
-        }
     } else if (status === 'declined') {
         payload.content = 'Your application was not approved. Your access remains restricted; contact staff to discuss your application. ' +
             'You have not been automatically kicked or banned.';
@@ -97,13 +106,13 @@ export function onboardingStatusPayload(config, guildId, record) {
         payload.components = [row(button('retry', 'Retry approval'))];
     } else if (status === 'questionnaire') {
         payload.content = record.preapprovedBy ?
-            'The owner preapproved this join. Your rules agreement is recorded; confirm only your age category for the correct channel access.' :
-            'Your rules agreement is recorded. Complete the private screening form to continue.';
-        payload.components = [row(button('form', 'Complete screening form'))];
+            'The owner preapproved this join. Confirm your age category and accept the server rules in the private form.' :
+            'Complete the private form and accept the server rules to continue.';
+        payload.components = [row(button('start', 'Start onboarding'))];
     } else {
-        payload.content = 'Read the server rules before continuing. Clicking “I agree to the rules” records your agreement.';
+        payload.content = 'Read the server rules, then click Start onboarding. Accept the rules inside the private form.';
         payload.components = [row(link('Read the rules', guildId, config.rulesChannelId),
-            button('agree', 'I agree to the rules', ButtonStyle.Success))];
+            button('start', 'Start onboarding'))];
     }
     return payload;
 }
@@ -113,15 +122,23 @@ function input(id, label, placeholder, required = true, maxLength = 100) {
         .setStyle(TextInputStyle.Short).setRequired(required).setMaxLength(maxLength).setPlaceholder(placeholder));
 }
 
-function screeningForm(preapproved = false) {
-    if (preapproved) return new ModalBuilder().setCustomId('onboarding_form').setTitle('PokeGalaxy access category')
-        .addComponents(input('ageGroup', 'Are you 18+ or under 18?', '18+ / under 18 (no exact age or birthday)', true, 20));
-    return new ModalBuilder().setCustomId('onboarding_form').setTitle('PokeGalaxy screening').addComponents(
+function formToken(config, record) {
+    return createHash('sha256').update(JSON.stringify([config.rulesVersion, record.id, record.joinedTimestamp]))
+        .digest('hex').slice(0, 24);
+}
+
+function screeningForm(config, record, preapproved = false) {
+    const form = new ModalBuilder().setCustomId(`onboarding_form:${formToken(config, record)}`);
+    const agreement = () => input('conduct', 'Agree to server rules and conduct? yes/no', 'yes = rules, appropriate chat and staff directions', true, 10);
+    if (preapproved) return form.setTitle('PokeGalaxy access category')
+        .addComponents(input('ageGroup', 'Are you 18+ or under 18?', '18+ / under 18 (no exact age or birthday)', true, 20),
+            agreement());
+    return form.setTitle('PokeGalaxy screening').addComponents(
         input('invited', 'Were you invited? Enter yes or no.', 'yes / no', true, 10),
         input('inviter', 'Inviter name (optional)', 'Leave blank if not invited or unknown', false),
         input('ageGroup', 'Are you 18+ or under 18?', '18+ / under 18 (no exact age or birthday)', true, 20),
         input('interest', 'What brings you here?', 'pokegalaxy / community / both / other', true, 100),
-        input('conduct', 'Appropriate chat and staff directions: agree?', 'Enter yes to agree, or no to stop', true, 10),
+        agreement(),
     );
 }
 
@@ -223,13 +240,19 @@ export async function handleOnboardingButton(interaction, client, args) {
                 .addComponents(input('reason', 'Reason for this decision (staff only)', 'Required audit reason', true, 500)));
             return;
         }
-        if (action === 'form') {
-            const member = await freshMember(interaction);
-            const config = await getOnboardingConfig(client, interaction.guildId);
-            const record = await getOnboardingMember(client, interaction.guildId, member.id);
-            if (!config.enabled || !isCurrentJoin(record, member) || record.status !== 'questionnaire' ||
-                record.rulesVersion !== config.rulesVersion) throw new Error('Start onboarding and agree to the current rules first.');
-            await interaction.showModal(screeningForm(record.preapprovedBy === member.guild.ownerId && !!record.preapprovedBy));
+        if (['start', 'form'].includes(action)) {
+            const [member, config] = await Promise.all([
+                freshMember(interaction), getOnboardingConfig(client, interaction.guildId),
+            ]);
+            const record = await beginOnboarding(client, member);
+            if (['awaiting_rules', 'questionnaire'].includes(record.status)) {
+                await interaction.showModal(screeningForm(config, record,
+                    record.preapprovedBy === member.guild.ownerId && !!record.preapprovedBy));
+                return;
+            }
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            if (['pending_review', 'approving'].includes(record.status)) await ensureReviewCard(client, member.guild, member.id);
+            await interaction.editReply(onboardingStatusPayload(config, member.guild.id, record));
             return;
         }
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -237,9 +260,8 @@ export async function handleOnboardingButton(interaction, client, args) {
         const config = await getOnboardingConfig(client, interaction.guildId);
         if (action === 'welcome') {
             await assertOnboardingMemberApproved(client, member);
-            const record = await getOnboardingMember(client, interaction.guildId, member.id);
             await interaction.editReply({
-                content: `Welcome to PokeGalaxy! Read the guide below.${record?.answers?.ageGroup === MINOR ? ` Play in <#${config.gameplayChannelId}>.` : ''}`,
+                content: 'Welcome to PokeGalaxy! Read the guide below.',
                 components: [row(link('PokeGalaxy welcome guide', interaction.guildId, config.welcomeChannelId, config.welcomeMessageId))],
                 allowedMentions: { parse: [] },
             });
@@ -248,7 +270,6 @@ export async function handleOnboardingButton(interaction, client, args) {
         let record;
         if (action === 'agree') record = await agreeToRules(client, member);
         else if (action === 'retry') record = await submitScreening(client, member, {});
-        else if (action === 'start') record = await beginOnboarding(client, member);
         else throw new Error('Unknown onboarding action.');
         if (['pending_review', 'approving'].includes(record.status)) await ensureReviewCard(client, member.guild, member.id);
         await interaction.editReply(onboardingStatusPayload(config, member.guild.id, record));
@@ -257,17 +278,22 @@ export async function handleOnboardingButton(interaction, client, args) {
     }
 }
 
-export async function handleOnboardingForm(interaction, client) {
+export async function handleOnboardingForm(interaction, client, args = []) {
     try {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const member = await freshMember(interaction);
         const existing = await getOnboardingMember(client, member.guild.id, member.id);
+        const config = await getOnboardingConfig(client, member.guild.id);
+        const [token] = args;
+        if (token && (!isCurrentJoin(existing, member) || token !== formToken(config, existing))) {
+            throw new Error('This form expired or the rules changed. Read the current rules and reopen Start onboarding.');
+        }
         const fields = existing?.preapprovedBy && existing.preapprovedBy === member.guild.ownerId ?
-            ['ageGroup'] : ['invited', 'inviter', 'ageGroup', 'interest', 'conduct'];
+            (token ? ['ageGroup', 'conduct'] : ['ageGroup']) : ['invited', 'inviter', 'ageGroup', 'interest', 'conduct'];
         const answers = Object.fromEntries(fields
             .map(id => [id, interaction.fields.getTextInputValue(id)]));
-        const record = await submitScreening(client, member, answers);
-        const config = await getOnboardingConfig(client, member.guild.id);
+        const record = await submitScreening(client, member, answers, token ?
+            { acceptedRulesVersion: config.rulesVersion, sessionId: existing.id } : {});
         if (['pending_review', 'approving'].includes(record.status)) await ensureReviewCard(client, member.guild, member.id);
         if (record.status === 'approved') await refreshDecisionCard(client, member.guild, member.id, record);
         await interaction.editReply(onboardingStatusPayload(config, member.guild.id, record));
@@ -300,6 +326,16 @@ export async function reconcileOnboarding(client) {
         try {
             const config = await getOnboardingConfig(client, guild.id);
             if (!config.enabled) continue;
+            if (config.panelMessageId) {
+                try {
+                    const channel = await guild.channels.fetch(config.applicationChannelId);
+                    const panel = await channel.messages.fetch(config.panelMessageId);
+                    if (panel.author.id !== client.user.id) throw new Error('The saved panel is not owned by Arceus.');
+                    await panel.edit(onboardingPanel(config, guild.id));
+                } catch (error) {
+                    logger.error(`Cannot update onboarding panel in ${guild.id}; run /onboarding panel to repair it:`, error);
+                }
+            }
             const keys = await client.db.list(getOnboardingMembersPrefix(guild.id));
             if (!Array.isArray(keys)) throw new Error('Cannot list saved onboarding records.');
             for (const key of keys) {

@@ -12,7 +12,8 @@ import {
 } from '../../utils/panelStatus.js';
 import { startDashboardSession } from '../../utils/dashboardSession.js';
 import { getReactionRoleKey } from '../../utils/database/keys.js';
-import { syncReactionPanel, reactionPanelEmbed, MAX_REACTION_ROLES } from '../../services/reactionRolePanels.js';
+import { syncReactionPanel, reactionPanelEmbed, MAX_REACTION_ROLES, normalizeReactionEmoji,
+    reactionMappings, setReactionRoleEmoji } from '../../services/reactionRolePanels.js';
 
 const DASHBOARD_EPHEMERAL = MessageFlags.Ephemeral;
 export default {
@@ -65,6 +66,11 @@ export default {
                         .setDescription('Fifth role to add')
                         .setRequired(false)
                 )
+                .addStringOption(option => option.setName('emoji1').setDescription('Emoji for role1 (Unicode or a custom emoji from this server)'))
+                .addStringOption(option => option.setName('emoji2').setDescription('Emoji for role2'))
+                .addStringOption(option => option.setName('emoji3').setDescription('Emoji for role3'))
+                .addStringOption(option => option.setName('emoji4').setDescription('Emoji for role4'))
+                .addStringOption(option => option.setName('emoji5').setDescription('Emoji for role5'))
         )
         .addSubcommand(subcommand =>
             subcommand
@@ -77,7 +83,13 @@ export default {
                         .setRequired(false)
                         .setAutocomplete(true)
                 )
-        ),
+        )
+        .addSubcommand(subcommand => subcommand
+            .setName('emoji')
+            .setDescription('Choose or change the emoji for a role on an existing panel')
+            .addStringOption(option => option.setName('panel').setDescription('Reaction role panel').setRequired(true).setAutocomplete(true))
+            .addRoleOption(option => option.setName('role').setDescription('Role on that panel').setRequired(true))
+            .addStringOption(option => option.setName('emoji').setDescription('One Unicode emoji or a custom emoji from this server').setRequired(true))),
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
@@ -87,12 +99,30 @@ export default {
         } else if (subcommand === 'dashboard') {
             const selectedPanelId = interaction.options.getString('panel');
             await handleDashboard(interaction, selectedPanelId);
+        } else if (subcommand === 'emoji') {
+            if (!interaction.guild || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+                throw new Error('Only server administrators may change reaction role emojis.');
+            }
+            if (!await InteractionHelper.safeDefer(interaction)) return;
+            try {
+                await setReactionRoleEmoji(interaction.client, interaction.guild,
+                    interaction.options.getString('panel'), interaction.options.getRole('role').id,
+                    interaction.options.getString('emoji'));
+            } catch (error) {
+                if (error instanceof TitanBotError) throw error;
+                throw createError(error.message, ErrorTypes.UNKNOWN,
+                    `Could not update the emoji: ${error.message} If changes were saved but synchronization failed, retry /reactroles dashboard.`,
+                    { guildId: interaction.guildId, originalError: error.message });
+            }
+            await InteractionHelper.safeEditReply(interaction, {
+                content: 'Reaction role emoji updated. Existing member roles were not changed.',
+            });
         }
     },
 
     async autocomplete(interaction) {
         if (interaction.commandName !== 'reactroles') return;
-        if (interaction.options.getSubcommand() !== 'dashboard') return;
+        if (!['dashboard', 'emoji'].includes(interaction.options.getSubcommand())) return;
 
         // Autocomplete must respond within 3s. Build choices from stored panel data and
         // cached channels/messages only — no network fetches — to avoid DiscordAPIError 10062.
@@ -249,6 +279,26 @@ async function handleSetup(interaction) {
         );
     }
 
+    const emojiRoles = {};
+    for (let i = 1; i <= 5; i++) {
+        const value = interaction.options.getString(`emoji${i}`);
+        if (!value) continue;
+        const role = interaction.options.getRole(`role${i}`);
+        if (!role) throw createError('Emoji supplied without a role', ErrorTypes.VALIDATION,
+            `Choose role${i} before setting emoji${i}.`);
+        if (!roles.some(candidate => candidate.id === role.id)) continue;
+        let emoji;
+        try {
+            emoji = await normalizeReactionEmoji(interaction.guild, value);
+        } catch (error) {
+            throw createError(error.message, ErrorTypes.VALIDATION, `Invalid emoji${i}: ${error.message}`);
+        }
+        if (Object.hasOwn(emojiRoles, emoji)) throw createError('Duplicate panel emoji', ErrorTypes.VALIDATION,
+            'Each role in a panel must use a different emoji.');
+        emojiRoles[emoji] = role.id;
+    }
+    reactionMappings({ roles: roles.map(role => role.id), emojiRoles });
+
     const panelEmbed = new EmbedBuilder()
         .setTitle(title)
         .setDescription(description)
@@ -274,7 +324,7 @@ async function handleSetup(interaction) {
             message.id,
             roleIds
         );
-        await syncReactionPanel(interaction.client, message, panel);
+        await syncReactionPanel(interaction.client, message, panel, emojiRoles);
     } catch (saveError) {
         // Remove a panel that could not be saved or seeded rather than leave broken controls.
         try {
@@ -400,6 +450,7 @@ function buildReactionRoleDashboardPayload(panelData, discordMsg, guildId, guild
             { name: 'Roles', value: `\`${panelData.roles.length} / ${MAX_REACTION_ROLES}\``, inline: true },
             { name: '\u200B', value: '\u200B', inline: true },
             { name: 'Role List', value: roleList, inline: false },
+            { name: 'Choose emojis', value: 'Use `/reactroles emoji` with this panel, a role and your preferred emoji. Existing member roles stay unchanged.', inline: false },
         )
         .setFooter({ text: 'Dashboard closes after 10 minutes of inactivity' })
         .setTimestamp();
